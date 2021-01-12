@@ -27,6 +27,8 @@ import agxRender
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.interpolate import splprep, splrep, splev, splint
+
 import sys
 import os
 import argparse
@@ -48,6 +50,22 @@ default = {
     'topFraction': 0.25
 }
 
+class SoilSurfaceEvaluator():
+    def __init__(self, x, z):
+        self.set_soil_surf(x,z)
+
+    def set_soil_surf(self, x, z):
+        self.tck_sigma = splrep(x, z, s = 0)
+
+    def soil_surf_eval(self, x):
+        # Evaluate the spline soil surface and its derivatives
+        surf     = splev(x, self.tck_sigma, der = 0, ext=3)
+        surf_d   = splev(x, self.tck_sigma, der = 1, ext=3)
+        surf_dd  = splev(x, self.tck_sigma, der = 2, ext=3)
+        surf_ddd = splev(x, self.tck_sigma, der = 3, ext=3)
+
+        return surf, surf_d, surf_dd, surf_ddd
+
 class AgxSimulator():
 
     def __init__(self):
@@ -65,7 +83,7 @@ class AgxSimulator():
     def setHeightField(self, agx_heightField, np_heightField):
 
         hf_size = agx_heightField.getSize()
-        print(hf_size[0])
+        # print(hf_size[0])
         # Set the height field heights
         for i in range(0, agx_heightField.getResolutionX()):
             for j in range(0, agx_heightField.getResolutionY()):
@@ -167,6 +185,30 @@ class AgxSimulator():
 
         return cuttingEdge, topEdge, forwardVector, bucket
 
+    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 10):
+
+        np_HeightField = np.zeros((n_x, n_y))
+        
+        x = np.linspace(0.0, r*(n_x-1), n_x)
+        y = np.linspace(0.0, r*(n_y-1), n_y)
+        X, Y = np.meshgrid(x, y)
+
+        # add/remove some random heaps
+        for i in range(random_heaps):
+
+            heap_height = np.random.uniform(0.3,2.0,1)
+            heap_sigma = np.random.uniform(1.5,3.0,1)
+
+            x_c = np.random.uniform(low = 0.0, high = n_x*r, size = 1)
+            y_c = np.random.uniform(low = 0.0, high = n_y*r, size = 1)
+
+            surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
+            np_HeightField = np_HeightField + np.sign(np.random.uniform(-1,2,1))*surf_heap_i
+
+        # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
+
+        return np_HeightField
+
     def buildTheScene(self, app, sim):
         '''
         With this function we will actually create our content
@@ -199,7 +241,9 @@ class AgxSimulator():
         agx_heightField = agxCollide.HeightField(num_cells_x, num_cells_y, (num_cells_x-1)*cell_size, (num_cells_y-1)*cell_size)
         
         # Dummy numpy height field
-        np_heightField = np.zeros((num_cells_x, num_cells_y))
+        # np_heightField = np.zeros((num_cells_x, num_cells_y))
+        np_heightField = self.createRandomHeightfield(num_cells_x, num_cells_y, cell_size)
+
         agx_heightField = self.setHeightField(agx_heightField,np_heightField)
 
         terrain = agxTerrain.Terrain.createFromHeightField(agx_heightField, 5.0)
@@ -527,7 +571,101 @@ class AgxSimulator():
             plt.plot(x,z)
             plt.show()
 
-    # def collectData(self, N = 2):
+            plt.plot(fill_array)
+            plt.show()
+    
+    def collectData(self, T = 5, N_traj = 3):
+            
+        # This is our simulation loop where we will
+        # Step simulation, update graphics(if we are using an application window) 
+        # We will step the simulation for 5 seconds
+
+        X_data   = []
+        U_data   = []
+        S_data   = []
+        Eta_data = []
+
+        sim, app = self.createSimulation(None)
+                     
+        for i in range(N_traj):
+
+            x_array   = []
+            u_array   = []
+            s_array   = []
+            eta_array = []
+
+
+            # Set the simulation scene
+            sim, app, ter, shov, driver = self.setScene(sim, app)
+
+            # Extract soil shape along the bucket excavation direction
+            hf = ter.getHeightField()
+            pos    = sim.getRigidBodies()[0].getPosition()
+            hf_grid_bucket = ter.getClosestGridPoint(pos)
+            x_hf_bucket,  y_hf_bucket = hf_grid_bucket[0], hf_grid_bucket[1]
+            
+            # print("initial bucket grid point: ", x_hf_bucket,  y_hf_bucket )
+            
+            x_hf = np.arange(0,ter.getResolutionX())*ter.getElementSize() + ter.getSurfacePositionWorld(agx.Vec2i(0,0))[0]
+            z_hf = np.zeros(x_hf.shape)
+            
+            for hf_x_index in range(ter.getResolutionX()):
+                z_hf[hf_x_index] = hf.getHeight(hf_x_index, y_hf_bucket)
+            
+            soilShapeEvaluator = SoilSurfaceEvaluator(x_hf,z_hf)
+
+            # Perform simulation
+            while sim.getTimeStamp() <= T:
+                
+                # Step the simulation forward
+                sim.stepForward()
+
+                # Measure all the quantities
+                # TODO: make sure rigid body referenced is explicitly bucket
+                pos    = sim.getRigidBodies()[0].getPosition()
+                theta = driver.angle
+                vel    = sim.getRigidBodies()[0].getVelocity()
+                omega = driver.omega
+
+                soil_force  = ter.getSeparationContactForce(shov)
+                bucket_force = driver.force
+                bucket_torque = driver.torque
+
+                fill   = ter.getLastDeadLoadFraction(shov)
+
+                surf, surf_d, surf_dd, surf_ddd = soilShapeEvaluator.soil_surf_eval(pos[0])
+
+                # compose data in relevant arrays
+                x_array.append(np.array([pos[0], pos[2], theta, vel[0], vel[1], omega ]))
+                u_array.append(np.array([bucket_force[0],bucket_force[2],bucket_torque]))
+                s_array.append(np.array([surf, surf_d, surf_dd, surf_ddd]))
+                eta_array.append(np.array([soil_force[0], soil_force[2], fill]))
+
+                if app:
+                    # Update the graphics window/entities
+                    app.executeOneStepWithGraphics()
+
+                # When running with a graphics window, we might want to slow it down a bit...
+                # Remove this if you want to run as fast as possible
+                # if app:
+                #     time.sleep(0.01)
+
+            x_array   = np.array(x_array)
+            u_array   = np.array(u_array)
+            s_array   = np.array(s_array)
+            eta_array = np.array(eta_array)
+
+            X_data.append(x_array)
+            U_data.append(u_array)
+            S_data.append(s_array)
+            Eta_data.append(eta_array)
+
+        X_data = np.array(X_data)
+        U_data = np.array(U_data)
+        S_data = np.array(S_data)
+        Eta_data = np.array(Eta_data)
+
+        return X_data, U_data, S_data, Eta_data
 
 
 
@@ -586,7 +724,7 @@ class LockForceDriver(agxSDK.StepEventListener):
         self.v_x_low  = 0.1
         self.v_x_high = 2.0
         self.v_z_low  = -0.2
-        self.v_z_high = 0.1
+        self.v_z_high = 0.0
 
         self.v_x_d = 1.0
         self.v_z_d = 0.0
@@ -623,7 +761,7 @@ class LockForceDriver(agxSDK.StepEventListener):
         force  = self.operations[0]
         torque = self.operations[1]
         
-        pos, vel, angle, omega = self.measureState()
+        self.pos, self.vel, self.angle, self.omega = self.measureState()
        
         if (t-self.t_last_setpoint) > 0.4:
             
@@ -639,17 +777,17 @@ class LockForceDriver(agxSDK.StepEventListener):
 
             # PID - VELOCITY CONTROL
             # calculate errors and error integral
-            e_v_x = self.v_x_d - vel[0]
-            e_v_z = self.v_z_d - vel[2]
+            e_v_x = self.v_x_d - self.vel[0]
+            e_v_z = self.v_z_d - self.vel[2]
 
             self.integ_e_x += e_v_x
             self.integ_e_z += e_v_z
 
             # calculate actuation forces
-            force[0]  = 20000*(e_v_x) + 1000*self.integ_e_x
-            force[2]  = 20000*(e_v_z) + 1000*self.integ_e_z + 10.0*self.bucket.getMassProperties().getMass()
+            force[0]  = 20000*(e_v_x) + 500*self.integ_e_x
+            force[2]  = 20000*(e_v_z) + 500*self.integ_e_z + 10.0*self.bucket.getMassProperties().getMass()
             
-            torque[1] = 10000*(-0.5 - angle) -1000*omega
+            torque[1] = 10000*(-0.6 - self.angle) -1000*self.omega
 
             # # PD - POSITION CONTROL
             # # Setting a random "setpoint" 
@@ -674,13 +812,17 @@ class LockForceDriver(agxSDK.StepEventListener):
 
 def main(args):
     agx_sim = AgxSimulator()
-    sim, app = agx_sim.createSimulation(args)
-    
-    sim, app, ter, shov, driver = agx_sim.setScene(sim, app)
-    agx_sim.runSimulation(sim, app, ter, shov, driver)
+    x,u,s,e = agx_sim.collectData()
+
+    # sim, app = agx_sim.createSimulation(args)
     
     # sim, app, ter, shov, driver = agx_sim.setScene(sim, app)
     # agx_sim.runSimulation(sim, app, ter, shov, driver)
+    
+    # sim, app, ter, shov, driver = agx_sim.setScene(sim, app)
+    # agx_sim.runSimulation(sim, app, ter, shov, driver)
+
+
 # Entry point when this script is loaded with python
 if agxPython.getContext() is None:
     init = agx.AutoInit()
