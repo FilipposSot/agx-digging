@@ -591,12 +591,12 @@ class AgxSimulator():
             print(x_initial_tip)
             x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -0.5, -50000*self.scaling, -10000*self.scaling,    0.])
             x_max = np.array([ 0.               , 0.1 ,   0.5,  0.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
-            u_min = np.array([ 0., -6000*self.scaling])
-            u_max = np.array([ 5000*self.scaling,  300*self.scaling])
+            u_min = np.array([ 0., -2000*self.scaling])
+            u_max = np.array([ 5000*self.scaling,  600*self.scaling])
 
             # define the path to be followed by MPCC
             x_path = x_initial_tip + np.array([0., 1., 2.0, 3.0, 4.0])
-            y_path = np.array([  0., -0.1, -0.2, -0.2, -0.2])
+            y_path = np.array([  0., -0.2, -0.2, -0.2, -0.2])
 
             # x_path = x_path - self.x_offset[0]
             # y_path = y_path - self.x_offset[1]
@@ -634,8 +634,8 @@ class AgxSimulator():
             # plt.show()
 
             # define the MPCC cost matrices and coef.
-            Q = sparse.diags([100., 100.])
-            R = sparse.diags([.001, .001, .001])
+            Q = sparse.diags([100., 10.])
+            R = sparse.diags([1., 1., 1.])
             q_theta = 1.
 
             # TODO Set the MPCC initial state (includes states, aux variables and path variable)
@@ -707,6 +707,7 @@ class AgxSimulator():
             # Perform simulation
             while sim.getTimeStamp() <= T:
 
+                # print("------------- new time step -----------------")
                 t_array.append(sim.getTimeStamp())
                 # Measure all the quantities
                 # TODO: make sure rigid body referenced is explicitly bucket
@@ -714,6 +715,7 @@ class AgxSimulator():
                 vel    = sim.getRigidBodies()[0].getVelocity()
                 acl    = sim.getRigidBodies()[0].getAcceleration()
                 soil_force = ter.getSeparationContactForce(shov)
+                
                 # soil_force_2 = ter.getContactForce(shov)
                 # soil_force_3 = agx.Vec3(0.,0.,0.)
                 # soil_torque_3 = agx.Vec3(0.,0.,0.)
@@ -795,14 +797,8 @@ class ForceDriverPID(agxSDK.StepEventListener):
 
         self.theta_d = -0.2
         self.v_d = 0.2
-        # self.v_x_low  = 0.2
-        # self.v_x_high =  2.0
-        # self.v_z_low  = -0.3
-        # self.v_z_high = -0.1
 
-        # self.v_x_d = 1.0
-        # self.v_z_d = 0.0
-        # self.D_d = 0.1
+        self.soil_force_last = agx.Vec3(0.,0.,0.)
 
         self.force  = self.operations[0]
         self.torque = self.operations[1]
@@ -832,9 +828,9 @@ class ForceDriverPID(agxSDK.StepEventListener):
         return pos, vel, angle, omega
 
     def post(self,t):
-        soil_force = self.terrain.getSeparationContactForce(self.shovel)
-        print(soil_force)
-
+        
+        self.soil_force_last = self.terrain.getSeparationContactForce(self.shovel)
+        # print('Soil force in post integration: ',self.soil_force_last)
 
     def pre(self, t):
 
@@ -844,8 +840,7 @@ class ForceDriverPID(agxSDK.StepEventListener):
         self.pos, self.vel, self.angle, self.omega = self.measureState()
 
         mass =  self.terrain.getDynamicMass(self.shovel)
-        print(soil_force)
-
+        
         s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos[0])
         D = s_nom - self.pos[2]
 
@@ -919,7 +914,9 @@ class ForceDriverDFL(agxSDK.StepEventListener):
 
         self.v_x_d = 1.0
         self.v_z_d = 0.0
-
+        
+        self.soil_force_last =  agx.Vec3( 0.0, 0.0, 0.0 )
+        
         self.force  = agx.Vec3( 0.0, 0.0, 0.0 )
         self.torque = agx.Vec3( 0.0, 0.0, 0.0 )
 
@@ -947,17 +944,20 @@ class ForceDriverDFL(agxSDK.StepEventListener):
         angle = self.hinge.getAngle()
         omega = self.hinge.getCurrentSpeed()
 
-        soil_force  = self.terrain.getSeparationContactForce(self.shovel)
         fill   = self.terrain.getDynamicMass(self.shovel)    
         
-        return pos, vel, angle, omega, soil_force, fill
+        return pos, vel, angle, omega, fill
+
+    def post(self, t):
+        self.soil_force_last = self.terrain.getSeparationContactForce(self.shovel)
+
 
     def pre(self, t):
 
         force  = agx.Vec3( 0.0, 0.0, 0.0)
         torque = agx.Vec3( 0.0, 0.0, 0.0)
         
-        self.pos, self.vel, self.angle, self.omega, self.soil_force, self.fill = self.measureState()
+        self.pos, self.vel, self.angle, self.omega, self.fill = self.measureState()
 
         if (t-self.t_last_control) > self.dt_control:
 
@@ -969,13 +969,9 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             # xi = self.dfl.g_Koop(np.array([self.pos[0], self.pos[2]]),np.array([self.vel[0], self.vel[2], self.fill]))
             # xi = 
             # xi = xi - np.concatenate((self.x_offset,self.e_offset))
-            xi =  np.array([ self.pos[0], self.pos[2], self.vel[0], self.vel[2],  self.scaling*self.soil_force[0],  self.scaling*self.soil_force[2], self.scaling*self.fill])
+            xi =  np.array([ self.pos[0], self.pos[2], self.vel[0], self.vel[2],  self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
             ####################### MPCC CONTROL #########################
-            print("soil_force: ", self.soil_force )
-            print("scaled x: ", self.scaling*self.soil_force[0] )    
-            print("scaled x: ", self.scaling*self.soil_force[0] )    
-            print('xi: ', xi)
-            
+
             U = self.mpcc.control_function(xi, t)
             
             ####################### LQR CONTROL ##########################
@@ -1155,7 +1151,7 @@ def main(args):
 
     plotData(t, x, u, s, e)
 
-    exit()
+    # exit()
 
     # Create the DFL model for the excavation system
     plant = DiggingPlant()
