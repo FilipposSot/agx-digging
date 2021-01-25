@@ -323,9 +323,9 @@ class AgxSimulator():
     def buildScene1(self, app, sim, root):
 
         # Create the Terrain
-        num_cells_x = 160
-        num_cells_y = 160
-        cell_size   = 0.075
+        num_cells_x = 80
+        num_cells_y = 80
+        cell_size   = 0.15
         max_depth   = 1.0
 
         # terrain = agxTerrain.Terrain( num_cells_x, num_cells_y, cell_size, max_depth )
@@ -589,14 +589,14 @@ class AgxSimulator():
             # x_array.append(np.array([pos[0], pos[2]]))
             # eta_array.append(np.array([vel[0], vel[2], soil_force[0], soil_force[2], fill_2]))
             print(x_initial_tip)
-            x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -0.5, -50000*self.scaling, -10000*self.scaling,    0.])
-            x_max = np.array([ 0.               , 0.1 ,   0.5,  0.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
-            u_min = np.array([ 0., -2000*self.scaling])
-            u_max = np.array([ 5000*self.scaling,  600*self.scaling])
+            x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
+            x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
+            u_min = np.array([ 0., -5000*self.scaling])
+            u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
 
             # define the path to be followed by MPCC
-            x_path = x_initial_tip + np.array([0., 1., 2.0, 3.0, 4.0])
-            y_path = np.array([  0., -0.2, -0.2, -0.2, -0.2])
+            x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
+            y_path = np.array([  0., -0.1, -0.2, -0.2, -0.2])
 
             # x_path = x_path - self.x_offset[0]
             # y_path = y_path - self.x_offset[1]
@@ -634,7 +634,7 @@ class AgxSimulator():
             # plt.show()
 
             # define the MPCC cost matrices and coef.
-            Q = sparse.diags([100., 10.])
+            Q = sparse.diags([10., 10.])
             R = sparse.diags([1., 1., 1.])
             q_theta = 1.
 
@@ -803,8 +803,8 @@ class ForceDriverPID(agxSDK.StepEventListener):
         self.force  = self.operations[0]
         self.torque = self.operations[1]
 
-        self.t_last_control = -100
-        self.t_last_setpoint = 0.0
+        self.t_last_control =  -100.
+        self.t_last_setpoint = -100.
 
         self.integ_e_x = 0.0
         self.integ_e_z = 0.0
@@ -851,11 +851,11 @@ class ForceDriverPID(agxSDK.StepEventListener):
             if D < 0.2:
                 self.theta_d = np.random.uniform(low = -0.5, high = -0.3)
             elif D >= 0.2 and D < 0.5:
-                self.theta_d = np.random.uniform(low = -0.3, high = 0.1)
+                self.theta_d = np.random.uniform(low = -0.3, high = -0.1)
             elif D >= 0.5:
                 self.theta_d = np.random.uniform(low = 0.0, high = 0.15)
             
-            self.v_d = np.random.uniform(low = 1.0, high = 3.5)
+            self.v_d = np.random.uniform(low = 0.5, high = 3.5)
             
             self.v_x_d = np.cos(self.theta_d)*self.v_d
             self.v_z_d = np.sin(self.theta_d)*self.v_d
@@ -876,15 +876,15 @@ class ForceDriverPID(agxSDK.StepEventListener):
             self.integ_e_x += e_v_x
             self.integ_e_z += e_v_z
             
-            force[0]  = -0.1*(20000*(e_v_x) + 500*self.integ_e_x)
-            force[2]  = -0.1*(20000*(e_v_z) + 500*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
+            force[0]  = -0.2*(20000*(e_v_x) + 500*self.integ_e_x)
+            force[2]  = -0.2*(20000*(e_v_z) + 500*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
             # torque[1] = 0.4*(10000*(-0.6 - self.angle) -1000*self.omega)
 
             self.force  = force 
             self.torque = torque
 
-            self.force[0] += np.random.uniform(low = -500, high = 500)
-            self.force[2] += np.random.uniform(low = -200, high = 200)
+            self.force[0] += np.random.uniform(low = -1000, high = 2000)
+            self.force[2] += np.random.uniform(low = -2000, high = 1500)
 
         self.setBodyForce(self.force)
         self.setBodyTorque(self.torque)
@@ -983,12 +983,6 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             force[0] = U[0]/self.scaling
             force[2] = U[1]/self.scaling + 10.0*self.bucket.getMassProperties().getMass()
 
-            # x = np.linspace(-6.0,6.0,100)
-            # z = np.zeros(x.shape)
-            # for i in range(len(x)):
-            #     z[i] =  self.soilShapeEvaluator.soil_surf_eval(x[i])[0]
-            # plt.plot(x,z)
-            # plt.show()
 
             self.t_last_control = t
 
@@ -1141,17 +1135,16 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
 
 def main(args):
 
-    dt_control = 0.05
-    dt_data = 0.05
+    dt_control = 0.02
+    dt_data = 0.02
 
 
     agx_sim = AgxSimulator(dt_data, dt_control)
     
-    t, x, u, s, e = agx_sim.collectData(T = 2.0, N_traj = 3)
+    t, x, u, s, e = agx_sim.collectData(T = 2.0, N_traj = )
 
     plotData(t, x, u, s, e)
 
-    # exit()
 
     # Create the DFL model for the excavation system
     plant = DiggingPlant()
@@ -1163,8 +1156,6 @@ def main(args):
 
 
     # A,B,K = dfl.linearize_soil_dynamics_no_surface(np.concatenate((x[0,0,:],e[0,0,:])))
-    
-    # print(A)
     # print(scipy.linalg.logm(A)/dt_control)
     
     #     # print(A)
@@ -1192,6 +1183,7 @@ def main(args):
          t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
 
 
+    # exit()/
     agx_sim.control_mode = "mpcc"
 
     # re-run with 
