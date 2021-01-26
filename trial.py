@@ -228,7 +228,7 @@ class AgxSimulator():
 
         return cuttingEdge, topEdge, forwardVector, bucket
 
-    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 0):
+    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 5):
 
         np_HeightField = np.zeros((n_x, n_y))
         
@@ -239,7 +239,7 @@ class AgxSimulator():
         # add/remove some random heaps
         for i in range(random_heaps):
 
-            heap_height = np.random.uniform(0.3,3.0,1)
+            heap_height = np.random.uniform(0.3,0.5,1)
             heap_sigma = np.random.uniform(1.5,3.0,1)
 
             x_c = np.random.uniform(low = 0.0, high = n_x*r, size = 1)
@@ -419,7 +419,6 @@ class AgxSimulator():
         # initial x position of bucket
         x_initial_tip = np.random.uniform(low = -5.0, high = -3.0)
 
-
         # find the soil height at the initial penetration location
         hf_grid_initial = terrain.getClosestGridPoint(agx.Vec3(x_initial_tip, 0.0, 0.0))
         height_initial = terrain.getHeight(hf_grid_initial)
@@ -432,14 +431,6 @@ class AgxSimulator():
         # in order to have some compliance when moving the shovel
         # through the terrain
         offset = agx.Vec3( 0.0, 0.0, 0.0 )
-
-        # exit()
-        # kinematicSphere = agx.RigidBody( agxCollide.Geometry( agxCollide.Sphere( .1 ) ) )
-        # kinematicSphere.setMotionControl( agx.RigidBody.DYNAMICS )
-        # kinematicSphere.getGeometries()[ 0 ].setEnableCollisions( False )
-        # kinematicSphere.setPosition( bucket.getFrame().transformPointToWorld( offset ))
-        # kinematicSphere.setRotation( bucket.getRotation() )
-        # simulation().add( kinematicSphere)
 
         ## ADD ALL THE JOINTS TO CONTROL THE BUCKET (x,z,theta)
         sphere1 = agx.RigidBody(agxCollide.Geometry( agxCollide.Sphere( .1 )))
@@ -506,8 +497,9 @@ class AgxSimulator():
 
         # Extract soil shape along the bucket excavation direction
         x_hf,z_hf = self.extractSoilSurface(terrain, sim)          
-        soilShapeEvaluator = SoilSurfaceEvaluator(x_hf, z_hf)
-        
+        self.soilShapeEvaluator = SoilSurfaceEvaluator(x_hf, z_hf)
+        setattr(self.dfl,"soilShapeEvaluator", self.soilShapeEvaluator)
+
         if self.control_mode == "data_collection":
 
             # create driver and add it to the simulation
@@ -523,7 +515,7 @@ class AgxSimulator():
                                     self.dt_control)
             
             # Add the current surface evaluator to the controller
-            setattr(driver, "soilShapeEvaluator", soilShapeEvaluator)
+            setattr(driver, "soilShapeEvaluator", self.soilShapeEvaluator)
 
             # Add the controller to the simulation
             sim.add(driver)
@@ -539,8 +531,7 @@ class AgxSimulator():
                                     self.dt_control)
             
             # Add the current surface evaluator to the controller
-            setattr(driver, "soilShapeEvaluator", soilShapeEvaluator)
-            setattr(self.dfl,"soilShapeEvaluator", soilShapeEvaluator)
+            setattr(driver, "soilShapeEvaluator", self.soilShapeEvaluator)
             setattr(driver, "dfl",self.dfl)
 
             # Add the controller to the simulation
@@ -555,9 +546,6 @@ class AgxSimulator():
                                     terrain,
                                     shovel,
                                     self.dt_control)
-
-            # setattr(driver, "x_offset", self.x_offset)
-            # setattr(driver, "e_offset", self.e_offset)
 
             ################ LQR CONTROLLER ############################
             # A,B,k = self.dfl.linearize_soil_dynamics_no_surface(np.concatenate((self.x_offset,self.e_offset)))
@@ -581,30 +569,39 @@ class AgxSimulator():
             ################ MPCC CONTROLLER ############################
 
             # Add the current surface evaluator to the controller
-            setattr(driver, "soilShapeEvaluator", soilShapeEvaluator)
-            setattr(self.dfl,"soilShapeEvaluator", soilShapeEvaluator)
-            setattr(driver, "dfl",self.dfl)
+            setattr(driver, "soilShapeEvaluator", self.soilShapeEvaluator)
+            setattr(driver, "dfl", self.dfl)
             setattr(driver, "scaling",self.scaling)
 
             # x_array.append(np.array([pos[0], pos[2]]))
             # eta_array.append(np.array([vel[0], vel[2], soil_force[0], soil_force[2], fill_2]))
             print(x_initial_tip)
-            x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
-            x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
-            u_min = np.array([ 0., -5000*self.scaling])
-            u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
-
-            # define the path to be followed by MPCC
-            x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
-            y_path = np.array([  0., -0.1, -0.2, -0.2, -0.2])
-
-            # x_path = x_path - self.x_offset[0]
-            # y_path = y_path - self.x_offset[1]
             
-            # print("x_path: ", x_path)
-            # print("y_path: ", y_path)
+            if self.model_has_surface_shape:
+                # define the path to be followed by MPCC
+                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
+                y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
+                y_path = y_soil + np.array([0., -0.15, -0.3, -0.3, -0.3])
+
+                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , np.amax(y_path),   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
+                u_min = np.array([ 0., -5000*self.scaling])
+                u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
+
+            else:
+
+                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
+                u_min = np.array([ 0., -5000*self.scaling])
+                u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
+
+                # define the path to be followed by MPCC
+                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
+                y_path = np.array([  0., -0.1, -0.3, -0.2, -0.2])
 
             spl_path = spline_path(x_path,y_path)
+
+
             # instantiate the MPCC object
             mpcc = MPCC(np.zeros((self.dfl.plant.n, self.dfl.plant.n)),
                         np.zeros((self.dfl.plant.n, self.dfl.plant.n_u)),
@@ -612,26 +609,24 @@ class AgxSimulator():
                         u_min, u_max,
                         dt = self.dt_data, N = 10)
 
-            # print("x_min.shape: ", x_min.shape)
-            # mpcc = MPCC(np.zeros((40, 40)),
-            # np.zeros((40, self.dfl.plant.n_u)),
-            # x_min, x_max,
-            # u_min, u_max,
-            # dt = self.dt_data, N = 20)
-
-
-            # set the observation function, path object and linearization function
+            #  set the observation function, path object and linearization function
             setattr(mpcc, "path_eval", spl_path.path_eval)
-            setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics_no_surface)
-            setattr(mpcc, "get_soil_surface", soilShapeEvaluator.soil_surf_eval)
+            setattr(mpcc, "get_soil_surface", self.soilShapeEvaluator.soil_surf_eval) 
+
+            fig = plt.figure()
+            ax = fig.add_subplot(1, 1, 1)
+            ax = mpcc.draw_path(ax, -10, -5)
+            ax = mpcc.draw_soil(ax, x_initial_tip -1, x_initial_tip +5)
+            ax.axis('equal')
+            plt.show()
+
+            if self.model_has_surface_shape:
+                print('Linearizing with soil shape')
+                setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics)
+            else:
+                setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics_no_surface)
 
             self.mpcc = copy.copy(mpcc)
-
-
-            # fig = plt.figure()
-            # ax = fig.add_subplot(1, 1, 1)
-            # ax = mpcc.draw_path(ax, -10.0, -7.0)
-            # plt.show()
 
             # define the MPCC cost matrices and coef.
             Q = sparse.diags([10., 10.])
@@ -645,8 +640,10 @@ class AgxSimulator():
             # x_0 = np.concatenate((y_0,np.array([-10.0])))
             x_0 = np.concatenate((np.array([pos[0], pos[2], vel[0], vel[2], 0., 0., 0.]), np.array([-10.0])))
             # x_0 = x_0 - np.concatenate((self.x_offset,self.e_offset,np.array([0.0])))
-            # print("x_0:", x_0)
-            
+            print("x_0:", x_0)
+            print("x_min:", x_min)
+            print("x_max:", x_max)
+
             # set initial input (since input cost is differential)
             u_minus = np.array([0.0, 0.0, 0.0])
 
@@ -747,7 +744,6 @@ class AgxSimulator():
                 sim.stepForward()
                 # app.executeOneStepWithGraphics()
 
-
                 bucket_force = driver.force
                 bucket_torque = driver.torque
                 u_array.append(np.array([ self.scaling*bucket_force[0],
@@ -842,6 +838,7 @@ class ForceDriverPID(agxSDK.StepEventListener):
         mass =  self.terrain.getDynamicMass(self.shovel)
         
         s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos[0])
+
         D = s_nom - self.pos[2]
 
         if (t-self.t_last_setpoint) > .2:
@@ -1007,8 +1004,6 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             self.force  = force
             self.torque = torque
 
-        print('force sent to bucket', self.force)
-
         self.setBodyForce(self.force)
         self.setBodyTorque(self.torque)
 
@@ -1031,29 +1026,6 @@ class DiggingPlant():
 
         self.B_cont_x = np.array([[0., 0.],
                                   [0., 0.]])
-
-        # # User defined matrices for DFL
-        # self.A_cont_x  = np.array([[ 0., 0., 1., 0.],
-        #                            [ 0., 0., 0., 1.],
-        #                            [ 0., 0., 0., 0.],
-        #                            [ 0., 0., 0., 0.]])
-
-        # self.A_cont_eta = np.array([[ 0., 0., 0., 0., 0. ],
-        #                             [ 0., 0., 0., 0., 0. ],
-        #                             [ 1., 0., 0., 0., 0. ],
-        #                             [ 0., 1., 0., 0., 0. ]])
-
-        # self.B_cont_x = np.array([[0., 0.],
-        #                           [0., 0.],
-        #                           [0., 0.],
-        #                           [0., 0.]])
-
-
-        # Hybrid model definition
-        # self.N_eta_hybrid = 4
-        # self.P =  np.eye(5)
-        # self.A_cont_eta_hybrid =   self.A_cont_eta.dot(np.linalg.pinv(self.P))
-
 
     def set_soil_surf(self, x, y):
 
@@ -1083,7 +1055,7 @@ class DiggingPlant():
 
 def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, comparison=False):
 
-    fig, axs = plt.subplots(5,1, figsize=(8,10))
+    fig, axs = plt.subplots(5,2, figsize=(8,10))
     
     # if len(x.shape)==3:
     #     t = t.reshape(-1,t.shape[-1])
@@ -1091,41 +1063,55 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
     #     u = u.reshape(-1,u.shape[-1])
     #     s = s.reshape(-1,s.shape[-1])
     #     e = e.reshape(-1,e.shape[-1])
+    print(t[0].shape)
+    print(x[0].shape)
     for i in range(x.shape[0]):
-        axs[0].plot(t[0,:],x[i,:,0],'r',marker=".")
-        axs[0].plot(t[0,:],x[i,:,1],'g',marker=".")
-        axs[0].set_title("tip position")
+        axs[0,0].plot(t[0,:],x[i,:,0],'r',marker=".")
+        axs[0,0].plot(t[0,:],x[i,:,1],'g',marker=".")
+        axs[0,0].set_title("tip position")
 
-        axs[1].plot(t[0,:],e[i,:,0],'r',marker=".")
-        axs[1].plot(t[0,:],e[i,:,1],'g',marker=".")
-        axs[1].set_title("tip velocity")
+        axs[1,0].plot(t[0,:],e[i,:,0],'r',marker=".")
+        axs[1,0].plot(t[0,:],e[i,:,1],'g',marker=".")
+        axs[1,0].set_title("tip velocity")
 
-        axs[2].plot(t[0,:],e[i,:,2],'r',marker=".")
-        axs[2].plot(t[0,:],e[i,:,3],'g',marker=".")
-        axs[2].set_title("soil force")
+        axs[2,0].plot(t[0,:],e[i,:,2],'r',marker=".")
+        axs[2,0].plot(t[0,:],e[i,:,3],'g',marker=".")
+        axs[2,0].set_title("soil force")
 
-        axs[3].plot(t[0,:],u[i,:,0],'k', marker = ".")
-        axs[3].plot(t[0,:],u[i,:,1],'k--',marker=".")
-        axs[3].set_title("bucket force")
+        axs[3,0].plot(t[0,:],u[i,:,0],'k', marker = ".")
+        axs[3,0].plot(t[0,:],u[i,:,1],'k--',marker=".")
+        axs[3,0].set_title("bucket force")
 
-        axs[4].plot(t[0,:],e[i,:,4],'r')
-        axs[4].set_title("Bucket Fill")
+        axs[4,0].plot(t[0,:],e[i,:,4],'r')
+        axs[4,0].set_title("Bucket Fill")
 
+        # soil shape variables
+        axs[0,1].plot(t[0,:],x[i,:,1],'k')
+        axs[0,1].plot(t[0,:],s[i,:,0],'r', marker=".")
+
+        axs[0,1].set_title("Soil height")
+
+        axs[1,1].plot(t[0,:],s[i,:,1],'r', marker=".")
+        axs[1,1].set_title("Soil gradient")
+
+        # axs[2,1].plot(t[0,:],s[i,:,2],'r', marker=".")
+        # axs[2,1].set_title("Soil Curvature")
+    
     if comparison:
 
-        axs[0].plot(t[0,:],x2[:,0],'r--')
-        axs[0].plot(t[0,:],x2[:,1],'g--')
+        axs[0,0].plot(t[0,:],x2[:,0],'r--')
+        axs[0,0].plot(t[0,:],x2[:,1],'g--')
         
-        axs[1].plot(t[0,:],e2[:,0],'r--')
-        axs[1].plot(t[0,:],e2[:,1],'g--')
+        axs[1,0].plot(t[0,:],e2[:,0],'r--')
+        axs[1,0].plot(t[0,:],e2[:,1],'g--')
 
-        axs[2].plot(t[0,:],e2[:,2],'r--',marker=".")
-        axs[2].plot(t[0,:],e2[:,3],'g--',marker=".")
+        axs[2,0].plot(t[0,:],e2[:,2],'r--',marker=".")
+        axs[2,0].plot(t[0,:],e2[:,3],'g--',marker=".")
 
-        axs[3].plot(t[0,:],u2[:,0],'k', marker = ".")
-        axs[3].plot(t[0,:],u2[:,1],'k--',marker=".")
+        axs[3,0].plot(t[0,:],u2[:,0],'k', marker = ".")
+        axs[3,0].plot(t[0,:],u2[:,1],'k--',marker=".")
 
-        axs[4].plot(t[0,:],e2[:,4],'r--')
+        axs[4,0].plot(t[0,:],e2[:,4],'r--')
 
 
 
@@ -1138,52 +1124,43 @@ def main(args):
     dt_control = 0.02
     dt_data = 0.02
 
+    agx_sim = AgxSimulator(dt_data, dt_control)    
 
-    agx_sim = AgxSimulator(dt_data, dt_control)
-    
-    t, x, u, s, e = agx_sim.collectData(T = 2.0, N_traj = )
+    agx_sim.model_has_surface_shape = True 
 
-    plotData(t, x, u, s, e)
-
-
-    # Create the DFL model for the excavation system
     plant = DiggingPlant()
+
     dfl = DFLSoil(plant, dt_data    = dt_data,
                          dt_control = dt_control)
+    setattr(agx_sim, "dfl", dfl)
    
-    # regress the dfl soil model
-    dfl.regress_model_no_surface(x,e,u,s)
+    t, x, u, s, e = agx_sim.collectData(T = 2.0, N_traj = 10)
+    print(s.shape)
+    plotData(t, x, u, s, e)
 
+    agx_sim.dfl.regress_model_new(x,e,u,s)
+
+    # exit()
 
     # A,B,K = dfl.linearize_soil_dynamics_no_surface(np.concatenate((x[0,0,:],e[0,0,:])))
-    # print(scipy.linalg.logm(A)/dt_control)
+        # print(scipy.linalg.logm(A)/dt_control)
     
-    #     # print(A)
-    # # print(np.absolute(np.linalg.eig(A)[0]))
-    # # A[3,0] = 0.
-    # print(A)
-    # print(np.absolute(np.linalg.eig(A)[0]))
-
-    # dfl.generate_hybrid_model(x,e,u,s)
-    # dfl.regress_model_Koop(x,e,u,s)
-
-    setattr(agx_sim, "dfl", dfl)
 
     y_dfl = np.zeros((x.shape[1],7))
-    y_dfl[0,:] = np.concatenate((x[0,0,:],e[0,0,:]))
+    y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
         
     # y_dfl = np.zeros((x.shape[1],7))
     # y_dfl[0,:] =  dfl.g_Koop(x[0,0,:],e[0,0,:])
 
     for i in range(x.shape[1] - 1):
-        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[0,i,:])
+        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
     
 
     plotData(t, x, u, s, e,
          t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
 
+    # exit()
 
-    # exit()/
     agx_sim.control_mode = "mpcc"
 
     # re-run with 
@@ -1203,14 +1180,12 @@ def main(args):
 
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
-    ax.plot(x_gt[0,:,0], x_gt[0,:,1],'.', color='tab:blue')
+    ax.plot(x_gt[0,:,0], x_gt[0,:,1],'.', color = 'tab:blue')
     ax = agx_sim.mpcc.draw_path(ax, -10, -5)
+    ax = agx_sim.mpcc.draw_soil(ax,x_gt[0,0,0]-1, x_gt[0,-1,0]+5)
     ax.axis('equal')
     plt.show()
 
-
-
-    
     # print("A matrices")
     # print(dfl.A_disc_x)
     # print(dfl.A_disc_eta)
