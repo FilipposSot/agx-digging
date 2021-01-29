@@ -112,7 +112,7 @@ class AgxSimulator():
         self.dt_control = dt_control
         self.dt_data = dt_data
 
-        self.scaling = 0.001
+        self.scaling = .001
 
     def setupCamera(self,  app):
         cameraData                   = app.getCameraData()
@@ -239,14 +239,35 @@ class AgxSimulator():
         # add/remove some random heaps
         for i in range(random_heaps):
 
-            heap_height = np.random.uniform(0.3,0.5,1)
-            heap_sigma = np.random.uniform(1.5,3.0,1)
+            heap_height = np.random.uniform(0.3,1.5,1)
+            heap_sigma = np.random.uniform(1.0,2.0,1)
 
             x_c = np.random.uniform(low = 0.0, high = n_x*r, size = 1)
             y_c = np.random.uniform(low = 0.0, high = n_y*r, size = 1)
 
             surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
-            np_HeightField = np_HeightField + np.sign(np.random.uniform(-1,2,1))*surf_heap_i
+            np_HeightField = np_HeightField + -np.sign(np.random.uniform(-1,2,1))*surf_heap_i
+
+        # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
+
+        return np_HeightField
+
+    def createFixedHeightfield(self, n_x, n_y, r, random_heaps = 5):
+
+        np_HeightField = np.zeros((n_x, n_y))
+        
+        x = np.linspace(0.0, r*(n_x-1), n_x)
+        y = np.linspace(0.0, r*(n_y-1), n_y)
+        X, Y = np.meshgrid(x, y)
+
+        heap_height = 1.0
+        heap_sigma = 1.5
+
+        x_c =  0.5*n_x*r
+        y_c =  0.5*n_y*r
+
+        surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
+        np_HeightField = np_HeightField + -1*surf_heap_i
 
         # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
 
@@ -334,7 +355,11 @@ class AgxSimulator():
         agx_heightField = agxCollide.HeightField(num_cells_x, num_cells_y, (num_cells_x-1)*cell_size, (num_cells_y-1)*cell_size)
         
         # Dummy numpy height field
-        np_heightField = self.createRandomHeightfield(num_cells_x, num_cells_y, cell_size)
+        if self.control_mode == "data_collection":
+            np_heightField = self.createRandomHeightfield(num_cells_x, num_cells_y, cell_size)
+        elif self.control_mode == "mpcc":
+            np_heightField = self.createFixedHeightfield(num_cells_x, num_cells_y, cell_size)
+
         agx_heightField = self.setHeightField(agx_heightField,np_heightField)
 
         terrain = agxTerrain.Terrain.createFromHeightField(agx_heightField, 5.0)
@@ -417,7 +442,7 @@ class AgxSimulator():
         tip_offset = shovel.getCuttingEdgeWorld().p2
         
         # initial x position of bucket
-        x_initial_tip = np.random.uniform(low = -5.0, high = -3.0)
+        x_initial_tip = np.random.uniform(low = -3.0, high = -3.0)
 
         # find the soil height at the initial penetration location
         hf_grid_initial = terrain.getClosestGridPoint(agx.Vec3(x_initial_tip, 0.0, 0.0))
@@ -579,19 +604,23 @@ class AgxSimulator():
             
             if self.model_has_surface_shape:
                 # define the path to be followed by MPCC
-                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
+                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
+                                                  3.0, 3.5, 4.0, 4.5, 5.0,
+                                                  5.5, 6.0, 6.5, 7.0,7.5])
                 y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([0., -0.15, -0.3, -0.3, -0.3])
+                y_path = y_soil + np.array([0., -0.15, -0.25, -0.25, -0.25,
+                                         -0.25, -0.25, -0.25, -0.25, -0.25,
+                                         -0.25, -0.25, -0.25, -0.25, -0.25])
 
-                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , np.amax(y_path),   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
+                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -70000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , np.amax(y_path),   1.5,  1.3,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
                 u_min = np.array([ 0., -5000*self.scaling])
                 u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
 
             else:
 
-                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -50000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  50000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
+                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -70000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  70000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
                 u_min = np.array([ 0., -5000*self.scaling])
                 u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
 
@@ -607,7 +636,7 @@ class AgxSimulator():
                         np.zeros((self.dfl.plant.n, self.dfl.plant.n_u)),
                         x_min, x_max,
                         u_min, u_max,
-                        dt = self.dt_data, N = 10)
+                        dt = self.dt_data, N = 30)
 
             #  set the observation function, path object and linearization function
             setattr(mpcc, "path_eval", spl_path.path_eval)
@@ -616,7 +645,7 @@ class AgxSimulator():
             fig = plt.figure()
             ax = fig.add_subplot(1, 1, 1)
             ax = mpcc.draw_path(ax, -10, -5)
-            ax = mpcc.draw_soil(ax, x_initial_tip -1, x_initial_tip +5)
+            ax = mpcc.draw_soil(ax, x_initial_tip -1, x_initial_tip + 5)
             ax.axis('equal')
             plt.show()
 
@@ -629,7 +658,7 @@ class AgxSimulator():
             self.mpcc = copy.copy(mpcc)
 
             # define the MPCC cost matrices and coef.
-            Q = sparse.diags([10., 10.])
+            Q = sparse.diags([200., 10.])
             R = sparse.diags([1., 1., 1.])
             q_theta = 1.
 
@@ -711,12 +740,11 @@ class AgxSimulator():
                 pos    = shov.getCuttingEdgeWorld().p2
                 vel    = sim.getRigidBodies()[0].getVelocity()
                 acl    = sim.getRigidBodies()[0].getAcceleration()
-                soil_force = ter.getSeparationContactForce(shov)
-                
                 # soil_force_2 = ter.getContactForce(shov)
-                # soil_force_3 = agx.Vec3(0.,0.,0.)
-                # soil_torque_3 = agx.Vec3(0.,0.,0.)
-                # ter.getPenetrationForce(shov, soil_force_3, soil_torque_3 )
+                soil_force_3 = agx.Vec3(0.,0.,0.)
+                soil_torque_3 = agx.Vec3(0.,0.,0.)
+                ter.getPenetrationForce(shov, soil_force_3, soil_torque_3 )
+                
 
                 # soil_force_4 = sim.getRigidBodies()[0].getMassProperties().getMass()*sim.getRigidBodies()[0].getAcceleration()
                 
@@ -729,12 +757,17 @@ class AgxSimulator():
                 # fill_1   = ter.getLastDeadLoadFraction(shov)
                 fill_2 = ter.getDynamicMass(shov)     
                 
+                soil_force =  ter.getSeparationContactForce(shov) + soil_force_3
+                # -(fill_2 + sim.getRigidBodies()[0].getMassProperties().getMass())*acl +
                 # Compose data in relevant arrays
                 x_array.append(np.array([pos[0], pos[2]]))
                 eta_array.append(np.array([vel[0], vel[2], 
                                            self.scaling*soil_force[0],
                                            self.scaling*soil_force[2],
                                            self.scaling*fill_2]))
+                # eta_array.append(np.array([vel[0], vel[2], 
+                #                            acl[0], acl[2],
+                #                            self.scaling*fill_2]))
                 s_array.append(np.array([surf, surf_d, surf_dd]))
 
                 # theta = driver.angle
@@ -748,7 +781,13 @@ class AgxSimulator():
                 bucket_torque = driver.torque
                 u_array.append(np.array([ self.scaling*bucket_force[0],
                                           self.scaling*(bucket_force[2] - 10.0*shov.getRigidBody().getMassProperties().getMass())]))
-
+                
+                # soil_force_2 =(sim.getRigidBodies()[0].getMassProperties().getMass())*acl - bucket_force 
+                
+                # eta_array.append(np.array([vel[0], vel[2], 
+                #                            self.scaling*soil_force_2[0],
+                #                            self.scaling*soil_force_2[2],
+                #                            self.scaling*fill_2]))
 
             t_array   = np.array(t_array)
             x_array   = np.array(x_array)
@@ -1119,65 +1158,84 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
     fig.tight_layout()
     plt.show()
 
+def saveData(t, x, u, s, e):
+
+    np.savez('data_26_01_21.npz',   t = t,
+                                    x = x,
+                                    e = e,
+                                    s = s,
+                                    u = u)
+def loadData(file_name):
+
+    data = np.load(file_name)
+    t = data['t']
+    x = data['x']
+    u = data['u']
+    e = data['e']
+    s = data['s']
+
+    return t, x, u, s, e
+
 def main(args):
 
     dt_control = 0.02
     dt_data = 0.02
+    T_traj_data = 3.0
+    N_traj_data = 5
+    plot_data = True
+    save_data = False
+
+    T_traj_test = 10.0
+    N_traj_test = 1
 
     agx_sim = AgxSimulator(dt_data, dt_control)    
-
     agx_sim.model_has_surface_shape = True 
-
     plant = DiggingPlant()
 
     dfl = DFLSoil(plant, dt_data    = dt_data,
                          dt_control = dt_control)
     setattr(agx_sim, "dfl", dfl)
    
-    t, x, u, s, e = agx_sim.collectData(T = 2.0, N_traj = 10)
-    print(s.shape)
-    plotData(t, x, u, s, e)
+    t, x, u, s, e = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
+
+    if plot_data:
+        plotData(t, x, u, s, e)
+    
+    if save_data:
+        saveData(t, x, u, s, e)
 
     agx_sim.dfl.regress_model_new(x,e,u,s)
 
-    # exit()
-
     # A,B,K = dfl.linearize_soil_dynamics_no_surface(np.concatenate((x[0,0,:],e[0,0,:])))
-        # print(scipy.linalg.logm(A)/dt_control)
+    # print(scipy.linalg.logm(A)/dt_control)
     
 
-    y_dfl = np.zeros((x.shape[1],7))
+    y_dfl = np.zeros((x.shape[1],plant.n))
     y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
         
-    # y_dfl = np.zeros((x.shape[1],7))
-    # y_dfl[0,:] =  dfl.g_Koop(x[0,0,:],e[0,0,:])
-
     for i in range(x.shape[1] - 1):
         y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
     
-
     plotData(t, x, u, s, e,
          t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
-
-    # exit()
-
+    
     agx_sim.control_mode = "mpcc"
 
-    # re-run with 
-    t_gt, x_gt, u_gt, s_gt, e_gt = agx_sim.collectData(T = 5, N_traj = 1)
+    # re-run with
+    t_gt, x_gt, u_gt, s_gt, e_gt = agx_sim.collectData(T = T_traj_test, N_traj =  N_traj_test)
     
+    # y_dfl = np.zeros((x_gt.shape[1],plant.n))
+    # y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
+    # # y_dfl[0,:] =  dfl.g_Koop(x_gt[0,0,:],e_gt[0,0,:])
 
-    y_dfl = np.zeros((x_gt.shape[1],7))
-    y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
-    # y_dfl[0,:] =  dfl.g_Koop(x_gt[0,0,:],e_gt[0,0,:])
 
+    # for i in range(x_gt.shape[1] - 1):
+    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_gt[0,i,:])
 
-    for i in range(x_gt.shape[1] - 1):
-        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_gt[0,i,:])
-
-    plotData(t_gt, x_gt, u_gt, s_gt, e_gt,
-             t_gt, y_dfl[:,: plant.n_x], u_gt[0,:,:], s_gt, y_dfl[:,plant.n_x :], comparison = True)
-
+    # plotData(t_gt, x_gt, u_gt, s_gt, e_gt,
+    #          t_gt, y_dfl[:,: plant.n_x], u_gt[0,:,:], s_gt, y_dfl[:,plant.n_x :], comparison = True)
+    plotData(t_gt, x_gt, u_gt, s_gt, e_gt)
+   
     fig = plt.figure()
     ax = fig.add_subplot(1, 1, 1)
     ax.plot(x_gt[0,:,0], x_gt[0,:,1],'.', color = 'tab:blue')
@@ -1186,39 +1244,7 @@ def main(args):
     ax.axis('equal')
     plt.show()
 
-    # print("A matrices")
-    # print(dfl.A_disc_x)
-    # print(dfl.A_disc_eta)
-    # print(dfl.B_disc_x)
-
-    # print("H matrices")
-    # print(dfl.H_disc_x)
-    # print(dfl.H_disc_eta)
-    # print(dfl.H_disc_u)
-    # plt.plot(x_gt[0,:,0],'r')
-    # plt.plot(x_gt[0,:,1],'g')
-    # plt.plot(y_dfl[:,0],'r--')
-    # plt.plot(y_dfl[:,1],'g--')
-    # plt.show()
-
-    # plt.plot(e_gt[0,:,0],'r')
-    # plt.plot(e_gt[0,:,1],'g')
-    # plt.plot(y_dfl[:,2],'r--')
-    # plt.plot(y_dfl[:,3],'g--')
-    # plt.show()
-
-    # plt.plot(e_gt[0,:,2],'r')
-    # plt.plot(e_gt[0,:,3],'g')
-    # plt.plot(y_dfl[:,4],'r--')
-    # plt.plot(y_dfl[:,5],'g--')
-    # plt.show()
-
 # Entry point when this script is loaded with python
 if agxPython.getContext() is None:
     init = agx.AutoInit()
     main(sys.argv)
-
-    # '''
-    # terrain.getShovels
-    # terrain.getSeparationContactForce
-    # '''
