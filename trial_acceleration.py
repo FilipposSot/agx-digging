@@ -260,8 +260,8 @@ class AgxSimulator():
         y = np.linspace(0.0, r*(n_y-1), n_y)
         X, Y = np.meshgrid(x, y)
 
-        heap_height = 1.0
-        heap_sigma = 1.5
+        heap_height = .5
+        heap_sigma = 3.0
 
         x_c =  0.5*n_x*r
         y_c =  0.5*n_y*r
@@ -442,7 +442,7 @@ class AgxSimulator():
         tip_offset = shovel.getCuttingEdgeWorld().p2
         
         # initial x position of bucket
-        x_initial_tip = np.random.uniform(low = -3.0, high = -3.0)
+        x_initial_tip = np.random.uniform(low = -3.0, high = -4.5)
 
         # find the soil height at the initial penetration location
         hf_grid_initial = terrain.getClosestGridPoint(agx.Vec3(x_initial_tip, 0.0, 0.0))
@@ -608,12 +608,12 @@ class AgxSimulator():
                                                   3.0, 3.5, 4.0, 4.5, 5.0,
                                                   5.5, 6.0, 6.5, 7.0,7.5])
                 y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([0., -0.15, -0.25, -0.25, -0.25,
-                                         -0.25, -0.25, -0.25, -0.25, -0.25,
-                                         -0.25, -0.25, -0.25, -0.25, -0.25])
+                y_path = y_soil + np.array([0., -0.1, -0.2, -0.2, -0.1,
+                                         -0.0, -0.0, -0.2, -0.2, -0.2,
+                                         -0.2, -0.2, -0.2, -0.2, -0.2])
 
-                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -70000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , np.amax(y_path),   1.5,  1.3,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -10., -10., -70000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , np.amax(y_path)+0.1,   1.5,  1.3,  10.,  10.,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
                 u_min = np.array([ 0., -5000*self.scaling])
                 u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
 
@@ -636,7 +636,7 @@ class AgxSimulator():
                         np.zeros((self.dfl.plant.n, self.dfl.plant.n_u)),
                         x_min, x_max,
                         u_min, u_max,
-                        dt = self.dt_data, N = 30)
+                        dt = self.dt_data, N = 10)
 
             #  set the observation function, path object and linearization function
             setattr(mpcc, "path_eval", spl_path.path_eval)
@@ -658,16 +658,18 @@ class AgxSimulator():
             self.mpcc = copy.copy(mpcc)
 
             # define the MPCC cost matrices and coef.
-            Q = sparse.diags([200., 10.])
+            Q = sparse.diags([10., 10.])
             R = sparse.diags([1., 1., 1.])
-            q_theta = 1.
+            q_theta = 0.1
 
             # TODO Set the MPCC initial state (includes states, aux variables and path variable)
             pos = shovel.getCuttingEdgeWorld().p2
             vel = bucket.getVelocity()
+            acl = bucket.getAcceleration()
+
             # y_0 = self.dfl.g_Koop(np.array([pos[0],pos[2]]),np.array([vel[0],vel[2],0.0]))
             # x_0 = np.concatenate((y_0,np.array([-10.0])))
-            x_0 = np.concatenate((np.array([pos[0], pos[2], vel[0], vel[2], 0., 0., 0.]), np.array([-10.0])))
+            x_0 = np.concatenate((np.array([pos[0], pos[2], vel[0], vel[2], acl[0], acl[2], 0., 0., 0.]), np.array([-10.0])))
             # x_0 = x_0 - np.concatenate((self.x_offset,self.e_offset,np.array([0.0])))
             print("x_0:", x_0)
             print("x_min:", x_min)
@@ -780,8 +782,8 @@ class AgxSimulator():
                 soil_force =  ter.getSeparationContactForce(shov) + soil_force_3
                 # -(fill_2 + sim.getRigidBodies()[0].getMassProperties().getMass())*acl +
                 # Compose data in relevant arrays
-                x_array.append(np.array([pos[0], pos[2]]))
-                eta_array.append(np.array([vel[0], vel[2], 
+                x_array.append(np.array([pos[0], pos[2], vel[0], vel[2]]))
+                eta_array.append(np.array([acl[0], acl[2], 
                                            self.scaling*soil_force[0],
                                            self.scaling*soil_force[2],
                                            self.scaling*fill_2]))
@@ -916,31 +918,31 @@ class ForceDriverPID(agxSDK.StepEventListener):
             self.v_x_d = np.cos(self.theta_d)*self.v_d
             self.v_z_d = np.sin(self.theta_d)*self.v_d
         
-        if (t-self.t_last_control) >= self.dt_control:
+        # if (t-self.t_last_control) >= self.dt_control:
 
-            self.t_last_control = t
+        self.t_last_control = t
 
-            # PID - VELOCITY CONTROL
-            # calculate errors and error integral
-            self.v_x_d = np.cos(self.theta_d)*self.v_d
-            self.v_z_d = np.sin(self.theta_d)*self.v_d
-            
-            e_v_x = self.vel[0] - self.v_x_d
-            e_v_z = self.vel[2] - self.v_z_d 
-            # e_p_z = (self.pos[2]) - (s_nom - self.D_d)
+        # PID - VELOCITY CONTROL
+        # calculate errors and error integral
+        self.v_x_d = np.cos(self.theta_d)*self.v_d
+        self.v_z_d = np.sin(self.theta_d)*self.v_d
+        
+        e_v_x = self.vel[0] - self.v_x_d
+        e_v_z = self.vel[2] - self.v_z_d 
+        # e_p_z = (self.pos[2]) - (s_nom - self.D_d)
 
-            self.integ_e_x += e_v_x
-            self.integ_e_z += e_v_z
-            
-            force[0]  = -0.2*(20000*(e_v_x) + 500*self.integ_e_x)
-            force[2]  = -0.2*(20000*(e_v_z) + 500*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
-            # torque[1] = 0.4*(10000*(-0.6 - self.angle) -1000*self.omega)
+        self.integ_e_x += e_v_x
+        self.integ_e_z += e_v_z
+        
+        force[0]  = -0.1*(20000*(e_v_x) + 500*self.integ_e_x)
+        force[2]  = -0.1*(20000*(e_v_z) + 500*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
+        # torque[1] = 0.4*(10000*(-0.6 - self.angle) -1000*self.omega)
 
-            self.force  = force 
-            self.torque = torque
+        self.force  = force 
+        self.torque = torque
 
-            self.force[0] += np.random.uniform(low = -1000, high = 2000)
-            self.force[2] += np.random.uniform(low = -2000, high = 1500)
+        self.force[0] += np.random.uniform(low = -1000, high = 2000)
+        self.force[2] += np.random.uniform(low = -2000, high = 1500)
 
         self.setBodyForce(self.force)
         self.setBodyTorque(self.torque)
@@ -996,13 +998,14 @@ class ForceDriverDFL(agxSDK.StepEventListener):
 
         pos = self.shovel.getCuttingEdgeWorld().p2
         vel = self.bucket.getVelocity()
-       
+        acl = self.bucket.getAcceleration()
+
         angle = self.hinge.getAngle()
         omega = self.hinge.getCurrentSpeed()
 
         fill   = self.terrain.getDynamicMass(self.shovel)    
         
-        return pos, vel, angle, omega, fill
+        return pos, vel, acl, angle, omega, fill
 
     def post(self, t):
         # # Measure Forces from soil
@@ -1031,64 +1034,63 @@ class ForceDriverDFL(agxSDK.StepEventListener):
         force  = agx.Vec3( 0.0, 0.0, 0.0)
         torque = agx.Vec3( 0.0, 0.0, 0.0)
         
-        self.pos, self.vel, self.angle, self.omega, self.fill = self.measureState()
+        self.pos, self.vel, self.acl, self.angle, self.omega, self.fill = self.measureState()
 
-        if (t-self.t_last_control) > self.dt_control:
+        # if (t-self.t_last_control) > self.dt_control:
 
-            # s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos[0])
-            # A_lin, B_lin, K_lin = self.dfl.linearize_soil_dynamics(x_nom)
-            
-            # xi = np.array([self.pos[0], self.pos[2], self.vel[0], self.vel[2], self.fill])
-
-            # xi = self.dfl.g_Koop(np.array([self.pos[0], self.pos[2]]),np.array([self.vel[0], self.vel[2], self.fill]))
-            # xi = 
-            # xi = xi - np.concatenate((self.x_offset,self.e_offset))
-            xi =  np.array([ self.pos[0], self.pos[2], self.vel[0], self.vel[2],  self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
-            ####################### MPCC CONTROL #########################
-
-            U = self.mpcc.control_function(xi, t)
-            
-            print('---------------------------------------------')
-            ####################### MPCC CONTROL #########################
+        # s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos[0])
+        # A_lin, B_lin, K_lin = self.dfl.linearize_soil_dynamics(x_nom)
         
-            print('xi: ', xi)
-            print("x_min constraints: ", xi<self.mpcc.x_min[:-1])
-            print("x_max constraints: ", xi>self.mpcc.x_max[:-1])
-            print("optimal input:", U )
+        # xi = np.array([self.pos[0], self.pos[2], self.vel[0], self.vel[2], self.fill])
+
+        # xi = self.dfl.g_Koop(np.array([self.pos[0], self.pos[2]]),np.array([self.vel[0], self.vel[2], self.fill]))
+        # xi = 
+        # xi = xi - np.concatenate((self.x_offset,self.e_offset))
+        xi =  np.array([ self.pos[0], self.pos[2], self.vel[0], self.vel[2], self.acl[0], self.acl[2], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        ####################### MPCC CONTROL #########################
+
+        U = self.mpcc.control_function(xi, t)
+        
+        print('---------------------------------------------')
+        ####################### MPCC CONTROL #########################
+    
+        print('xi: ', xi)
+        print("x_min constraints: ", xi<self.mpcc.x_min[:-1])
+        print("x_max constraints: ", xi>self.mpcc.x_max[:-1])
+        print("optimal input:", U )
+
+        ####################### LQR CONTROL ##########################
+        # U = np.array(-self.K_lqr.dot( xi_error ))
+        # xi_error = xi - np.array([xi[0], -0.2, 0.5, xi[3], xi[4] ])
+        # print("ERROR: ",xi_error )
+        # print("Control: ",U )
+
+        force[0] = U[0]/self.scaling
+        force[2] = U[1]/self.scaling + 10.0*self.bucket.getMassProperties().getMass()
 
 
-            ####################### LQR CONTROL ##########################
-            # U = np.array(-self.K_lqr.dot( xi_error ))
-            # xi_error = xi - np.array([xi[0], -0.2, 0.5, xi[3], xi[4] ])
-            # print("ERROR: ",xi_error )
-            # print("Control: ",U )
+        self.t_last_control = t
 
-            force[0] = U[0]/self.scaling
-            force[2] = U[1]/self.scaling + 10.0*self.bucket.getMassProperties().getMass()
+        # PID - VELOCITY CONTROL
+        # calculate errors and error integral
+        # e_v_x = self.v_x_d - self.vel[0]
+        # # e_v_z = self.v_z_d - self.vel[2]
+        # e_p_z = s_nom - self.pos[2] - 0.2
 
+        # self.integ_e_x += e_v_x
+        # self.integ_e_z += e_p_z
 
-            self.t_last_control = t
+        # force[0] = np.random.uniform(low = 2000 , high = 15000)
+        # force[2] = np.random.uniform(low = -300 , high = -4000)
 
-            # PID - VELOCITY CONTROL
-            # calculate errors and error integral
-            # e_v_x = self.v_x_d - self.vel[0]
-            # # e_v_z = self.v_z_d - self.vel[2]
-            # e_p_z = s_nom - self.pos[2] - 0.2
-
-            # self.integ_e_x += e_v_x
-            # self.integ_e_z += e_p_z
-
-            # force[0] = np.random.uniform(low = 2000 , high = 15000)
-            # force[2] = np.random.uniform(low = -300 , high = -4000)
-
-            # calculate actuation forces
-            # force[0]  = 0.2*(20000*(e_v_x) + 1000*self.integ_e_x)           
-            # force[2]  = 0.2*(20000*(e_p_z) + 1000*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
-            
-            torque[1] = 0.0
-            
-            self.force  = force
-            self.torque = torque
+        # calculate actuation forces
+        # force[0]  = 0.2*(20000*(e_v_x) + 1000*self.integ_e_x)           
+        # force[2]  = 0.2*(20000*(e_p_z) + 1000*self.integ_e_z) + 10.0*self.bucket.getMassProperties().getMass()
+        
+        torque[1] = 0.0
+        
+        self.force  = force
+        self.torque = torque
 
         self.setBodyForce(self.force)
         self.setBodyTorque(self.torque)
@@ -1098,19 +1100,25 @@ class DiggingPlant():
     def __init__(self):
 
         # Linear part of states matrices
-        self.n_x    = 2
+        self.n_x    = 4
         self.n_eta  = 5
         self.n_u    = 2
         self.n      = self.n_x + self.n_eta
 
         # User defined matrices for DFL
-        self.A_cont_x  = np.array([[ 0., 0.],
-                                   [ 0., 0.]])
+        self.A_cont_x  = np.array([[ 0., 0., 1., 0.],
+                                   [ 0., 0., 0., 1.],
+                                   [ 0., 0., 0., 0.],
+                                   [ 0., 0., 0., 0.]])
 
-        self.A_cont_eta = np.array([[ 1., 0., 0., 0., 0. ],
+        self.A_cont_eta = np.array([[ 0., 0., 0., 0., 0.],
+                                    [ 0., 0., 0., 0., 0.],
+                                    [ 1., 0., 0., 0., 0.],
                                     [ 0., 1., 0., 0., 0.]])
 
         self.B_cont_x = np.array([[0., 0.],
+                                  [0., 0.],
+                                  [0., 0.],
                                   [0., 0.]])
 
     def set_soil_surf(self, x, y):
@@ -1142,43 +1150,44 @@ class DiggingPlant():
 def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, comparison=False):
 
     fig, axs = plt.subplots(5,2, figsize=(8,10))
-    
-    # if len(x.shape)==3:
-    #     t = t.reshape(-1,t.shape[-1])
-    #     x = x.reshape(-1,x.shape[-1])
-    #     u = u.reshape(-1,u.shape[-1])
-    #     s = s.reshape(-1,s.shape[-1])
-    #     e = e.reshape(-1,e.shape[-1])
+
     print(t[0].shape)
     print(x[0].shape)
+
     for i in range(x.shape[0]):
         axs[0,0].plot(t[0,:],x[i,:,0],'r',marker=".")
         axs[0,0].plot(t[0,:],x[i,:,1],'g',marker=".")
         axs[0,0].set_title("tip position")
 
-        axs[1,0].plot(t[0,:],e[i,:,0],'r',marker=".")
-        axs[1,0].plot(t[0,:],e[i,:,1],'g',marker=".")
+        axs[1,0].plot(t[0,:],x[i,:,2],'r',marker=".")
+        axs[1,0].plot(t[0,:],x[i,:,3],'g',marker=".")
         axs[1,0].set_title("tip velocity")
 
-        axs[2,0].plot(t[0,:],e[i,:,2],'r',marker=".")
-        axs[2,0].plot(t[0,:],e[i,:,3],'g',marker=".")
-        axs[2,0].set_title("soil force")
+        axs[2,0].plot(t[0,:],e[i,:,0],'r',marker=".")
+        axs[2,0].plot(t[0,:],e[i,:,1],'g',marker=".")
+        axs[2,0].set_title("tip acceleration")
 
-        axs[3,0].plot(t[0,:],u[i,:,0],'k', marker = ".")
-        axs[3,0].plot(t[0,:],u[i,:,1],'k--',marker=".")
-        axs[3,0].set_title("bucket force")
+        axs[3,0].plot(t[0,:],e[i,:,2],'r',marker=".")
+        axs[3,0].plot(t[0,:],e[i,:,3],'g',marker=".")
+        axs[3,0].set_title("soil force")
 
-        axs[4,0].plot(t[0,:],e[i,:,4],'r')
-        axs[4,0].set_title("Bucket Fill")
+        axs[4,0].plot(t[0,:],u[i,:,0],'k', marker = ".")
+        axs[4,0].plot(t[0,:],u[i,:,1],'k--',marker = ".")
+        axs[4,0].set_title("bucket force")
+
+        axs[0,1].plot(t[0,:],e[i,:,4],'r')
+        axs[0,1].set_title("Bucket Fill")
 
         # soil shape variables
-        axs[0,1].plot(t[0,:],x[i,:,1],'k')
-        axs[0,1].plot(t[0,:],s[i,:,0],'r', marker=".")
+        axs[2,1].plot(t[0,:],x[i,:,1],'k')
+        axs[2,1].plot(t[0,:],s[i,:,0],'r', marker=".")
+        axs[2,1].set_title("Soil height")
 
-        axs[0,1].set_title("Soil height")
+        axs[3,1].plot(t[0,:],s[i,:,1],'r', marker=".")
+        axs[3,1].set_title("Soil gradient")
 
-        axs[1,1].plot(t[0,:],s[i,:,1],'r', marker=".")
-        axs[1,1].set_title("Soil gradient")
+        if comparison:
+            break
 
         # axs[2,1].plot(t[0,:],s[i,:,2],'r', marker=".")
         # axs[2,1].set_title("Soil Curvature")
@@ -1188,16 +1197,19 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
         axs[0,0].plot(t[0,:],x2[:,0],'r--')
         axs[0,0].plot(t[0,:],x2[:,1],'g--')
         
-        axs[1,0].plot(t[0,:],e2[:,0],'r--')
-        axs[1,0].plot(t[0,:],e2[:,1],'g--')
+        axs[1,0].plot(t[0,:],x2[:,2],'r--')
+        axs[1,0].plot(t[0,:],x2[:,3],'g--')
 
-        axs[2,0].plot(t[0,:],e2[:,2],'r--',marker=".")
-        axs[2,0].plot(t[0,:],e2[:,3],'g--',marker=".")
+        axs[2,0].plot(t[0,:],e2[:,0],'r--',marker=".")
+        axs[2,0].plot(t[0,:],e2[:,1],'g--',marker=".")
 
-        axs[3,0].plot(t[0,:],u2[:,0],'k', marker = ".")
-        axs[3,0].plot(t[0,:],u2[:,1],'k--',marker=".")
+        axs[3,0].plot(t[0,:],e2[:,2],'r--',marker=".")
+        axs[3,0].plot(t[0,:],e2[:,3],'g--',marker=".")
 
-        axs[4,0].plot(t[0,:],e2[:,4],'r--')
+        axs[4,0].plot(t[0,:],u2[:,0],'k', marker = ".")
+        axs[4,0].plot(t[0,:],u2[:,1],'k--',marker=".")
+
+        axs[0,1].plot(t[0,:],e2[:,4],'r--')
 
 
 
@@ -1225,9 +1237,9 @@ def loadData(file_name):
 
 def main(args):
 
-    dt_control = 0.02
-    dt_data = 0.02
-    T_traj_data = 3.0
+    dt_control = 0.05
+    dt_data = 0.05
+    T_traj_data = 5.0
     N_traj_data = 5
     plot_data = True
     save_data = False
@@ -1245,6 +1257,10 @@ def main(args):
    
     t, x, u, s, e = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
 
+    print(x.shape)
+    print(u.shape)
+    print(e.shape)
+
     if plot_data:
         plotData(t, x, u, s, e)
     
@@ -1258,10 +1274,10 @@ def main(args):
     
 
     y_dfl = np.zeros((x.shape[1],plant.n))
-    y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
+    y_dfl[0,:] = np.concatenate((x[0,0,:],e[0,0,:]))
         
     for i in range(x.shape[1] - 1):
-        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
+        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[0,i,:])
     
     plotData(t, x, u, s, e,
          t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
