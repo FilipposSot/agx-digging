@@ -690,18 +690,18 @@ class AgxSimulator():
                                                   3.0, 3.5, 4.0, 4.5, 5.0,
                                                   5.5, 6.0, 6.5, 7.0,7.5])
                 y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([ -0.0, -0.15, -0.25, -0.25, -0.25,
-                                             -0.25, -0.25, -0.25, -0.25, -0.25,
-                                             -0.25, -0.25, -0.25, -0.25, -0.25])
+                y_path = y_soil + np.array([ -0.07,  -0.25, -0.25, -0.25, -0.25,
+                                             -0.25,  -0.25, -0.25, -0.25, -0.25,
+                                             -0.25,  -0.25, -0.25, -0.25, -0.25])
 
-                # x_min = np.array([ x_initial_tip-0.1 ,  -2. , 1.0   ,  -0.5 , -2.5 , -2.5 , -100, -100 , -100, -70000*self.scaling, -10000*self.scaling, 0.0])
-                # x_max = np.array([ 2.                , 0.0  , 1.9   ,   2.5 ,  2.5 ,  2.5 ,  100,  100 ,  100,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+                x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.5   ,  -0.5 , -2.5 , -2.5 , -200, -200 , -200, -70000*self.scaling, -70000*self.scaling, 0.0])
+                x_max = np.array([ 2.                , 0.0  , 2.5   ,   2.5 ,  2.5 ,  2.5 ,  200,  200 ,  200,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
                 
-                x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.5   ,  -0.5 , -2.5 , -2.5 , -70000*self.scaling, -10000*self.scaling, 0.0])
-                x_max = np.array([ 2.                , 0.0  , 1.9   ,   2.5 ,  2.5 ,  2.5 ,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+                # x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.2   ,   0.0 , -2.5 , -2.5 , -70000*self.scaling, -70000*self.scaling, 0.0])
+                # x_max = np.array([ 5.                , 0.0  , 2.4   ,   2.5 ,  2.5 ,  2.5 ,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
                 
-                u_min = np.array([ 0.                , -20000*self.scaling ,  -10000*self.scaling ])
-                u_max = np.array([ 40000*self.scaling,  20000*self.scaling ,   10000*self.scaling ])
+                u_min = np.array([ -100.*self.scaling   , -100000*self.scaling ,  -100000*self.scaling ])
+                u_max = np.array([  100000.*self.scaling,   100000*self.scaling ,   100000*self.scaling ])
 
             else:
 
@@ -722,7 +722,7 @@ class AgxSimulator():
                         np.zeros((self.dfl.plant.n, self.dfl.plant.n_u)),
                         x_min, x_max,
                         u_min, u_max,
-                        dt = self.dt_data, N = 15)
+                        dt = self.dt_data, N = 50)
 
             #  set the observation function, path object and linearization function
             setattr(mpcc, "path_eval", spl_path.path_eval)
@@ -744,20 +744,19 @@ class AgxSimulator():
             self.mpcc = copy.copy(mpcc)
 
             # define the MPCC cost matrices and coef.
-            Q = 0.1*sparse.diags([20., 10.])
-            R = sparse.diags([1., 1., 1., 1.])
+            Q = 1000*sparse.diags([1., 1.])
+            R = 1.*sparse.diags([1., 1., 1., 1.])
             q_theta = 1.
-
             pos_tip, vel_tip, acl_tip, ang_tip, omega, alpha = measureBucketState(sphere3, shovel)
 
-            # x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
-            #                                 vel_tip[0], vel_tip[2], omega[1],
-            #                                 acl_tip[0], acl_tip[2], alpha[1],
-            #                                 0.        ,  0.       ,     0.]), np.array([-10.0])))
-           
             x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
                                             vel_tip[0], vel_tip[2], omega[1],
+                                            acl_tip[0], acl_tip[2], alpha[1],
                                             0.        ,  0.       ,     0.]), np.array([-10.0])))
+           
+            # x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
+            #                                 vel_tip[0], vel_tip[2], omega[1],
+            #                                 0.        ,  0.       ,     0.]), np.array([-10.0])))
             # x_0 = x_0 - np.concatenate((self.x_offset,self.e_offset,np.array([0.0])))
             print("x_0:", x_0)
             print("x_min:", x_min)
@@ -831,24 +830,30 @@ class AgxSimulator():
                 surf, surf_d, surf_dd, surf_ddd = soilShapeEvaluator.soil_surf_eval(pos_tip[0])
                
                 # Compose data in relevant arrays
-                # x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip, vel_tip[0], vel_tip[2], omega[1]]))
-                x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip ]))
+                x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip, vel_tip[0], vel_tip[2], omega[1]]))
+                # x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip ]))
 
-                # eta_array.append(np.array([acl_tip[0], acl_tip[2], alpha[1],
-                #                            self.scaling*soil_force[0],
-                #                            self.scaling*soil_force[2],
-                #                            self.scaling*fill]))
-
-                eta_array.append(np.array([vel_tip[0], vel_tip[2], omega[1],
+                eta_array.append(np.array([acl_tip[0], acl_tip[2], alpha[1],
                                            self.scaling*soil_force[0],
                                            self.scaling*soil_force[2],
                                            self.scaling*fill]))
+
+                # eta_array.append(np.array([vel_tip[0], vel_tip[2], omega[1],
+                #                            self.scaling*soil_force[0],
+                #                            self.scaling*soil_force[2],
+                #                            self.scaling*fill]))
 
                 s_array.append(np.array([surf, surf_d, surf_dd]))
 
                 # app.executeOneStepWithGraphics()
                 # sim.stepForward()
 
+                mass = shov.getRigidBody().getMassProperties().getMass() - 3.28
+
+                p1 = shov.getRigidBody().getCmPosition()   
+                p2 = locksphere.getPosition()   
+                r  = p2 - p1
+                
 
                 # # Step the simulation forward
                 if self.control_mode == "mpcc":
@@ -864,15 +869,11 @@ class AgxSimulator():
                 bucket_force = driver.force
                 bucket_torque = driver.torque
 
-                mass = shov.getRigidBody().getMassProperties().getMass() - 3.28
-
-                p1 = shov.getRigidBody().getCmPosition()   
-                p2 = locksphere.getPosition()   
-                r  = p2 - p1
+                # print("in collect data: ", 10.0*mass*r[0])
 
                 u_array.append(np.array([ self.scaling*bucket_force[0],
                                           self.scaling*(bucket_force[2] - 10.0*mass),
-                                          self.scaling*(bucket_torque - 10.0*mass*r[0])]))
+                                          self.scaling*(bucket_torque   - 10.0*mass*r[0])]))
                 
             t_array   = np.array(t_array)
             x_array   = np.array(x_array)
@@ -1009,7 +1010,7 @@ class ForceDriverPID(agxSDK.StepEventListener):
 
         force[0]  = -1000.*(1.*(e_v_x) + .5*self.integ_e_x)
         force[2]  = -1500.*(1.*(e_v_z) + .5*self.integ_e_z) + 10.0*mass
-        torque    = -1000.*(1.*e_ang   + .3*self.integ_e_ang + 0.04*self.omega[1]) + 10.0*mass*r[0]
+        torque    = -5000.*(1.*np.sign(e_ang)*e_ang**2   + .01*self.integ_e_ang + 0.20*self.omega[1]) + 10.0*mass*r[0]
 
         self.force  = force 
         self.torque = torque
@@ -1098,8 +1099,8 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             # xi = 
             # xi = xi - np.concatenate((self.x_offset,self.e_offset))           
         
-        # xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.acl_tip[0], self.acl_tip[2], self.alpha[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
-        xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.acl_tip[0], self.acl_tip[2], self.alpha[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        # xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
 
         print('---------------------------------------------')
         ####################### MPCC CONTROL #########################
@@ -1126,6 +1127,8 @@ class ForceDriverDFL(agxSDK.StepEventListener):
         force[2] = U[1]/self.scaling + 10.0*mass
         torque   = U[2]/self.scaling + 10.0*mass*r[0]
 
+        # print("in function: ", 10.0*mass*r[0])
+
         self.t_last_control = t
         
         self.force  = force
@@ -1144,46 +1147,46 @@ class DiggingPlant():
         # self.n_eta  = 6
         # self.n_u    = 3
 
-        self.n_x    = 3
+        self.n_x    = 6
         self.n_eta  = 6
         self.n_u    = 3
 
         self.n      = self.n_x + self.n_eta
 
         # # User defined matrices for DFL
-        # self.A_cont_x  = np.array([[ 0., 0., 0., 1., 0., 0.],
-        #                            [ 0., 0., 0., 0., 1., 0.],
-        #                            [ 0., 0., 0., 0., 0., 1.],
-        #                            [ 0., 0., 0., 0., 0., 0.],
-        #                            [ 0., 0., 0., 0., 0., 0.],
-        #                            [ 0., 0., 0., 0., 0., 0.]])
+        self.A_cont_x  = np.array([[ 0., 0., 0., 1., 0., 0.],
+                                   [ 0., 0., 0., 0., 1., 0.],
+                                   [ 0., 0., 0., 0., 0., 1.],
+                                   [ 0., 0., 0., 0., 0., 0.],
+                                   [ 0., 0., 0., 0., 0., 0.],
+                                   [ 0., 0., 0., 0., 0., 0.]])
 
-        # self.A_cont_eta = np.array([[ 0., 0., 0., 0., 0., 0.],
-        #                             [ 0., 0., 0., 0., 0., 0.],
-        #                             [ 0., 0., 0., 0., 0., 0.],
-        #                             [ 1., 0., 0., 0., 0., 0.],
-        #                             [ 0., 1., 0., 0., 0., 0.],
-        #                             [ 0., 0., 1., 0., 0., 0.]])
-
-        # self.B_cont_x = np.array([[ 0., 0., 0.],
-        #                           [ 0., 0., 0.],
-        #                           [ 0., 0., 0.],
-        #                           [ 0., 0., 0.],
-        #                           [ 0., 0., 0.],
-        #                           [ 0., 0., 0.]])
-
-        # User defined matrices for DFL
-        self.A_cont_x  = np.array([[ 0., 0., 0.],
-                                   [ 0., 0., 0.],
-                                   [ 0., 0., 0.]])
-
-        self.A_cont_eta = np.array([[ 1., 0., 0., 0., 0., 0.],
+        self.A_cont_eta = np.array([[ 0., 0., 0., 0., 0., 0.],
+                                    [ 0., 0., 0., 0., 0., 0.],
+                                    [ 0., 0., 0., 0., 0., 0.],
+                                    [ 1., 0., 0., 0., 0., 0.],
                                     [ 0., 1., 0., 0., 0., 0.],
                                     [ 0., 0., 1., 0., 0., 0.]])
 
         self.B_cont_x = np.array([[ 0., 0., 0.],
                                   [ 0., 0., 0.],
+                                  [ 0., 0., 0.],
+                                  [ 0., 0., 0.],
+                                  [ 0., 0., 0.],
                                   [ 0., 0., 0.]])
+
+        # User defined matrices for DFL
+        # self.A_cont_x  = np.array([[ 0., 0., 0.],
+        #                            [ 0., 0., 0.],
+        #                            [ 0., 0., 0.]])
+
+        # self.A_cont_eta = np.array([[ 1., 0., 0., 0., 0., 0.],
+        #                             [ 0., 1., 0., 0., 0., 0.],
+        #                             [ 0., 0., 1., 0., 0., 0.]])
+
+        # self.B_cont_x = np.array([[ 0., 0., 0.],
+        #                           [ 0., 0., 0.],
+        #                           [ 0., 0., 0.]])
 
     def set_soil_surf(self, x, y):
 
@@ -1305,7 +1308,9 @@ def plotData2(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compar
     #     s = s.reshape(-1,s.shape[-1])
     #     e = e.reshape(-1,e.shape[-1])
 
-    for i in range(x.shape[0]):
+    for i in range( x.shape[0] - 1, -1, -1):
+        print("i: ", i)
+
         axs[0,0].plot(t[0,:],x[i,:,0],'r',marker=".")
         axs[0,0].plot(t[0,:],x[i,:,1],'g',marker=".")
         axs[0,0].plot(t[0,:],x[i,:,2],'b',marker=".")
@@ -1397,16 +1402,15 @@ def loadData(file_name):
 
 def main(args):
 
-    dt_control = 0.02
-    dt_data = 0.02
-    T_traj_data = 8.0
-    N_traj_data = 5
+    dt_control = 0.01
+    dt_data = 0.01
+    T_traj_data = 5.0
+    N_traj_data = 4
 
     plot_data = True
     save_data = False
     use_saved_data = True
-
-    T_traj_test = 10.0
+    T_traj_test = 5.0
     N_traj_test = 1
 
     agx_sim = AgxSimulator(dt_data, dt_control)    
@@ -1429,21 +1433,27 @@ def main(args):
         saveData(t, x, u, s, e)
 
     agx_sim.dfl.regress_model_custom(x,e,u,s)
+    # A,B,K = dfl.linearize_soil_dynamics(np.concatenate((x[0,0,:],e[0,0,:])))
+    
+    # print(A)
+    # print(B)
+    
     # agx_sim.dfl.regress_model_new(x,e,u,s)
-
     # A,B,K = dfl.linearize_soil_dynamics(np.concatenate((x[0,0,:],e[0,0,:])))
 
     # print(A)
     # print(B)
+    
+    # exit()
 
     # y_dfl = np.zeros((x.shape[1],plant.n))
-    # y_dfl[0,:] = np.concatenate((x[0,0,:],e[0,0,:]))
+    # y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
         
     # for i in range(x.shape[1] - 1):
-    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[0,i,:])
+    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
     
     # plotData2(t, x, u, s, e,
-    #      t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
+    #      t, y_dfl[:,:plant.n_x ], u[-1,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
     
     # exit()
 
@@ -1452,9 +1462,9 @@ def main(args):
     # re-run with
     t_gt, x_gt, u_gt, s_gt, e_gt = agx_sim.collectData(T = T_traj_test, N_traj =  N_traj_test)
     
-    # y_dfl = np.zeros((x_gt.shape[1],plant.n))
-    # y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
-    # # y_dfl[0,:] =  dfl.g_Koop(x_gt[0,0,:],e_gt[0,0,:])
+    y_dfl = np.zeros((x_gt.shape[1],plant.n))
+    y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
+    # y_dfl[0,:] =  dfl.g_Koop(x_gt[0,0,:],e_gt[0,0,:])
 
 
     # for i in range(x_gt.shape[1] - 1):
@@ -1468,7 +1478,7 @@ def main(args):
     ax = fig.add_subplot(1, 1, 1)
     ax.plot(x_gt[0,:,0], x_gt[0,:,1],'.', color = 'tab:blue')
     ax = agx_sim.mpcc.draw_path(ax, -10, -5)
-    ax = agx_sim.mpcc.draw_soil(ax,x_gt[0,0,0]-1, x_gt[0,-1,0]+5)
+    ax = agx_sim.mpcc.draw_soil(ax,-5, 5)
     ax.axis('equal')
     plt.show()
 
