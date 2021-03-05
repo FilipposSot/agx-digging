@@ -608,14 +608,14 @@ class AgxSimulator():
                                                   3.0, 3.5, 4.0, 4.5, 5.0,
                                                   5.5, 6.0, 6.5, 7.0,7.5])
                 y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([0., -0.1, -0.2, -0.2, -0.1,
-                                         -0.0, -0.0, -0.2, -0.2, -0.2,
-                                         -0.2, -0.2, -0.2, -0.2, -0.2])
+                y_path = y_soil + np.array([0., -0.1, -0.25, -0.25, -0.25,
+                                         -0.25, -0.25, -0.25, -0.25, -0.25,
+                                         -0.25, -0.25, -0.25, -0.25, -0.25])
 
-                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -10., -10., -70000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , np.amax(y_path)+0.1,   1.5,  1.3,  10.,  10.,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
-                u_min = np.array([ 0., -5000*self.scaling])
-                u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
+                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -2.1, -2.5, -50., -50., -70000*self.scaling, -10000*self.scaling,    0.])
+                x_max = np.array([ 0.               , np.amax(y_path)+0.1,   2.5,  2.3,  50.,  50.,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+                u_min = np.array([ -5000., -20000*self.scaling])
+                u_max = np.array([ 20000*self.scaling,  20000*self.scaling])
 
             else:
 

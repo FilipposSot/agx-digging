@@ -26,16 +26,27 @@ import agxRender
 # Python imports
 import math
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splrep, splev, splint
 import control
 import scipy
-import copy
+from datetime import datetime
+
+import matplotlib
+matplotlib.rcParams['font.family'] = "Times New Roman"
+matplotlib.rcParams['mathtext.default'] = 'rm'
+matplotlib.rcParams['mathtext.fontset'] = 'cm'
+matplotlib.rcParams.update({'font.size': 15})
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams["legend.loc"] = 'upper left'
+import matplotlib.colors as colors
+import matplotlib.pyplot as plt
 
 from dfl.dfl.dfl_soil_agx import *
 from dfl.dfl.mpcc import *
 from dfl.dfl.dynamic_system import *
 
+import pickle
+import copy
 import sys
 import os
 import argparse
@@ -47,7 +58,9 @@ sys.path.append(os.getenv("AGX_DIR") + "/data/python/tutorials")
 from tutorial_utils import createHelpText
 from agxPythonModules.utils.numpy_utils import BufferWrapper
 
-np.set_printoptions(precision = 3, suppress = True)
+np.set_printoptions(precision = 5, suppress = True)
+np.set_printoptions(edgeitems=30, linewidth=100000)
+np.core.arrayprint._line_width = 200
 
 # Defualt shovel settings
 default = {
@@ -131,7 +144,6 @@ def measureBucketState(lockSphere, shovel):
 
     return pos_tip, vel_tip, acl_tip, ang_tip, omega, alpha 
 
-
 def measureSoilQuantities(shovel, terrain):
        
     # Measure Forces from soil
@@ -164,13 +176,33 @@ class AgxSimulator():
         self.dt_data = dt_data
 
         self.scaling = .001
+        
+        self.set_height_from_previous = False
+        self.consecutive_scoop_i = 0
 
-    def setupCamera(self,  app):
+
+
+    # def setupCamera(self,  app):
+    #     cameraData                   = app.getCameraData()
+    #     cameraData.eye               = agx.Vec3( 1.7190326542940962E+01, -1.4658716770523059E-01, 1.2635000298378865E+01 )
+    #     cameraData.center            = agx.Vec3( 3.4621315146672371E-01, -1.2032941390018395E-01, -4.7443399198018110E-01 )
+    #     cameraData.up                = agx.Vec3( -6.1418716626367531E-01, 2.8103832342862844E-04, 7.8916034227174481E-01 )
+    #     cameraData.nearClippingPlane = 0.1
+    #     cameraData.farClippingPlane  = 5000
+    #     app.applyCameraData( cameraData )
+
+    def setupCamera(self,  app):    
         cameraData                   = app.getCameraData()
-        cameraData.eye               = agx.Vec3( 1.7190326542940962E+01, -1.4658716770523059E-01, 1.2635000298378865E+01 )
-        cameraData.center            = agx.Vec3( 3.4621315146672371E-01, -1.2032941390018395E-01, -4.7443399198018110E-01 )
-        cameraData.up                = agx.Vec3( -6.1418716626367531E-01, 2.8103832342862844E-04, 7.8916034227174481E-01 )
-        cameraData.nearClippingPlane = 0.1
+        # cameraData.eye               = agx.Vec3( 15.  , -15. , 13. )
+        # cameraData.center            = agx.Vec3( 0.   ,  0.  , 0. )
+        # cameraData.up                = agx.Vec3( -0.6 ,  0.5 , 0.8 )
+        # cameraData.nearClippingPlane = 0.1
+        # cameraData.farClippingPlane  = 5000
+
+        cameraData.eye               = agx.Vec3( -3.  , -10. , 0.4)
+        cameraData.center            = agx.Vec3( -3.   ,  0.  , 0. )
+        cameraData.up                = agx.Vec3( 0.0, 0.0, 0.0)
+        cameraData.nearClippingPlane = 10
         cameraData.farClippingPlane  = 5000
         app.applyCameraData( cameraData )
 
@@ -279,7 +311,7 @@ class AgxSimulator():
 
         return cuttingEdge, topEdge, forwardVector, bucket
 
-    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 5):
+    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 7):
 
         np_HeightField = np.zeros((n_x, n_y))
         
@@ -290,14 +322,36 @@ class AgxSimulator():
         # add/remove some random heaps
         for i in range(random_heaps):
 
-            heap_height = np.random.uniform(0.3,0.5,1)
-            heap_sigma  = np.random.uniform(1.0,2.0,1)
+            heap_height = np.random.uniform(0.3,1.0,1)
+            heap_sigma  = np.random.uniform(2.0,3.0,1)
 
             x_c = np.random.uniform(low = 0.0, high = n_x*r, size = 1)
             y_c = np.random.uniform(low = 0.0, high = n_y*r, size = 1)
 
             surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
-            np_HeightField = np_HeightField + -np.sign(np.random.uniform(-1,2,1))*surf_heap_i
+            np_HeightField = np_HeightField + -np.sign(np.random.uniform(-3,3,1))*surf_heap_i
+
+        # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
+
+        return np_HeightField
+
+    def createRandomHeightfield(self, n_x, n_y, r, random_heaps = 5):
+
+        np_HeightField = np.zeros((n_x, n_y))
+        
+        x = np.linspace(0.0, r*(n_x-1), n_x)
+        y = np.linspace(0.0, r*(n_y-1), n_y)
+        X, Y = np.meshgrid(x, y)
+        heights = [1.0,-1.0,1.5,-1.5,0.5]
+        sigmas  = [2.5,2.5,2.5,2.5,2.5]
+        x_c      = [6.0,6.0,6.0,6.0,6.0]
+        y_c      = [3.0,5.0,8.0,10.0,11.0]
+
+        # add/remove some random heaps
+        for i in range(random_heaps):
+
+            surf_heap_i = heights[i]*np.exp(-(np.square(X-x_c[i]) + np.square(Y-y_c[i]))/sigmas[i]**2)
+            np_HeightField = np_HeightField + surf_heap_i
 
         # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
 
@@ -311,15 +365,15 @@ class AgxSimulator():
         y = np.linspace(0.0, r*(n_y-1), n_y)
         X, Y = np.meshgrid(x, y)
 
-        heap_height = 0.50
-        heap_sigma = 4.5
+        heap_height = 1.0# 1.5 #0.5
+        heap_sigma = 3.5
 
         x_c =  0.5*n_x*r
         y_c =  0.5*n_y*r
 
         surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
-        np_HeightField = np_HeightField + -1*surf_heap_i
-
+        # np_HeightField = np_HeightField + -1*surf_heap_i
+        np_HeightField = np_HeightField #- 0.2*Y #0.2*np.sign(Y-3)
         # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
 
         return np_HeightField
@@ -339,7 +393,7 @@ class AgxSimulator():
 
         return x_hf, z_hf
 
-    def createSimulation(self, args):
+    def createSimulation(self, no_graphics = True):
         
         ap = argparse.ArgumentParser()
 
@@ -348,7 +402,7 @@ class AgxSimulator():
         args1, args2 = ap.parse_known_args()
         args1 = vars(args1)
 
-        if args1['noApp']:
+        if no_graphics:
             app = None
         else:
             # Creates an Example Application
@@ -388,7 +442,8 @@ class AgxSimulator():
 
         ter, shov, driver, locksphere = self.buildScene1(app, sim, root)
 
-        self.setupCamera(app)
+        if app:
+            self.setupCamera(app)
 
         return ter, shov, driver, locksphere
 
@@ -407,11 +462,16 @@ class AgxSimulator():
         
         # Dummy numpy height field
         if self.control_mode == "data_collection":
-            np_heightField = self.createRandomHeightfield(num_cells_x, num_cells_y, cell_size)
-        elif self.control_mode == "mpcc":
+            np_heightField = self.createFixedHeightfield(num_cells_x, num_cells_y, cell_size)
+        elif self.control_mode == "mpcc" or self.control_mode == "trajectory_control":
             np_heightField = self.createFixedHeightfield(num_cells_x, num_cells_y, cell_size)
 
-        agx_heightField = self.setHeightField(agx_heightField,np_heightField)
+
+        if self.set_height_from_previous:
+            agx_heightField = self.agx_heightField_previous
+        else:
+            agx_heightField = self.setHeightField(agx_heightField,np_heightField)
+
 
         terrain = agxTerrain.Terrain.createFromHeightField(agx_heightField, 5.0)
         sim.add(terrain)
@@ -434,22 +494,23 @@ class AgxSimulator():
         # to get rid of the mateiral in a practical way.
         terrain.getProperties().setDeleteSoilParticlesOutsideBounds( True )
 
-        # Setup a renderer for the terrain
-        renderer = agxOSG.TerrainVoxelRenderer( terrain, root )
+        if app:
+            # Setup a renderer for the terrain
+            renderer = agxOSG.TerrainVoxelRenderer( terrain, root )
 
-        renderer.setRenderHeightField( True )
-        # We choose to render the compaction of the soil to visually denote excavated
-        # soil from compacted ground
-        # renderer.setRenderCompaction( True, agx.RangeReal( 1.0, 1.05 ) )
+            renderer.setRenderHeightField( True )
+            # We choose to render the compaction of the soil to visually denote excavated
+            # soil from compacted ground
+            # renderer.setRenderCompaction( True, agx.RangeReal( 1.0, 1.05 ) )
+            renderer.setRenderHeights(True, agx.RangeReal(-0.4,0.1))
+            # renderer.setRenderHeights(True, agx.RangeReal(-0.5,0.5))
+            renderer.setRenderVoxelSolidMass(False)
+            renderer.setRenderVoxelFluidMass(True)
+            renderer.setRenderNodes(False)
+            renderer.setRenderVoxelBoundingBox(False)
+            renderer.setRenderSoilParticlesMesh(True)
 
-        renderer.setRenderHeights(True, agx.RangeReal(-0.5,0.5))
-        renderer.setRenderVoxelSolidMass(False)
-        renderer.setRenderVoxelFluidMass(True)
-        renderer.setRenderNodes(False)
-        renderer.setRenderVoxelBoundingBox(False)
-        renderer.setRenderSoilParticlesMesh(True)
-
-        sim.add( renderer )
+            sim.add( renderer )
 
         # Set contact materials of the terrain and shovel
         # This contact material governs the resistance that the shovel will feel when digging into the terrain
@@ -480,11 +541,12 @@ class AgxSimulator():
 
         # Add the shovel to the terrain
         terrain.add( shovel )
-
-        # Create visual representation of the shovel
-        node = agxOSG.createVisual(bucket, root)
-        agxOSG.setDiffuseColor(node, agxRender.Color.Gold())
-        agxOSG.setAlpha(node, 1.0)
+        
+        if app and self.consecutive_scoop_i < 4:
+            # Create visual representation of the shovel
+            node = agxOSG.createVisual(bucket, root)
+            agxOSG.setDiffuseColor(node, agxRender.Color.Gold())
+            agxOSG.setAlpha(node, 1.0)
 
         # Set initial bucket rotation
         if self.control_mode == "mpcc":
@@ -499,12 +561,23 @@ class AgxSimulator():
         # Get the offset of the bucket tip from the COM
         tip_offset = shovel.getCuttingEdgeWorld().p2
         
-        # initial x position of bucket
-        x_initial_tip = np.random.uniform(low = -4.5, high = -3.0)
+        # Set initial bucket rotation
+        if self.control_mode == "mpcc" or self.control_mode == "trajectory_control":
+            
+            if self.consecutive_scoop_i == 0 :
+                x_initial_tip = -4.0
+            elif self.consecutive_scoop_i == 1:
+                x_initial_tip = -3.6
+            elif self.consecutive_scoop_i == 2:
+                x_initial_tip = -3.3
+            else:
+                x_initial_tip = -2.6
+        else:
+            x_initial_tip = np.random.uniform(low = -4.5, high = -3.0)
 
         # find the soil height at the initial penetration location
         hf_grid_initial = terrain.getClosestGridPoint(agx.Vec3(x_initial_tip, 0.0, 0.0))
-        height_initial = terrain.getHeight(hf_grid_initial) - 0.02
+        height_initial = terrain.getHeight(hf_grid_initial) - 0.05
         
         # Set the initial bucket location such that it is just contacting the soil
         position = agx.Vec3(x_initial_tip-tip_offset[0], 0, height_initial-tip_offset[2]) 
@@ -552,17 +625,18 @@ class AgxSimulator():
         sim.add(sphere2)
         sim.add(sphere3)
 
-        node1 = agxOSG.createVisual( sphere1, root)
-        node2 = agxOSG.createVisual( sphere2, root)
-        node3 = agxOSG.createVisual( sphere3, root)
+        # if app:
+        #     node1 = agxOSG.createVisual( sphere1, root)
+        #     node2 = agxOSG.createVisual( sphere2, root)
+        #     node3 = agxOSG.createVisual( sphere3, root)
 
-        agxOSG.setDiffuseColor( node1, agxRender.Color.Red() )
-        agxOSG.setDiffuseColor( node2, agxRender.Color.Green() )
-        agxOSG.setDiffuseColor( node3, agxRender.Color.Blue() )
+        #     agxOSG.setDiffuseColor( node1, agxRender.Color.Red() )
+        #     agxOSG.setDiffuseColor( node2, agxRender.Color.Green() )
+        #     agxOSG.setDiffuseColor( node3, agxRender.Color.Blue() )
 
-        agxOSG.setAlpha( node1 , 0.5 )
-        agxOSG.setAlpha( node2 , 0.5 )
-        agxOSG.setAlpha( node3 , 0.5 ) 
+        #     agxOSG.setAlpha( node1 , 0.5 )
+        #     agxOSG.setAlpha( node2 , 0.5 )
+        #     agxOSG.setAlpha( node3 , 0.5 ) 
 
         # Set prismatic joint for x transalation world - sphere 1
         f1 = agx.Frame()
@@ -632,19 +706,31 @@ class AgxSimulator():
             # Add the controller to the simulation
             sim.add(driver)
         
-        elif self.control_mode == "testing":
+        elif self.control_mode == "trajectory_control":
             # create driver and add it to the simulation
-            driver = ForceDriverDFL(app,
+            # create driver and add it to the simulation
+            driver = ForceDriverTrajectory(app,
                                     sphere3,
                                     lock,
                                     hinge2,
+                                    prismatic1,
+                                    prismatic2,
                                     terrain,
                                     shovel,
+                                    operations,
                                     self.dt_control)
             
             # Add the current surface evaluator to the controller
             setattr(driver, "soilShapeEvaluator", self.soilShapeEvaluator)
             setattr(driver, "dfl",self.dfl)
+
+            x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
+                                                  3.0, 3.5])
+            y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
+            y_path = y_soil + np.array([ -0.07,  -0.25, -0.25, -0.25, -0.25,
+                                             -0.25, -0.02])
+            spl_path = spline_path(x_path,y_path)
+            setattr(driver, "path_eval", spl_path.path_eval)
 
             # Add the controller to the simulation
             sim.add(driver)
@@ -659,22 +745,7 @@ class AgxSimulator():
                                     shovel,
                                     self.dt_control)
 
-            ################ LQR CONTROLLER ############################
-            # A,B,k = self.dfl.linearize_soil_dynamics_no_surface(np.concatenate((self.x_offset,self.e_offset)))
-            
-            # Q = np.array([[10,0,0,0,0],
-            #               [0,0,0,0,0],
-            #               [0,0,10,0,0],
-            #               [0,0,0,0,0],
-            #               [0,0,0,0,0]])
-            
-            # R = np.array([[0.000001,0],
-            #               [0      ,0.000001]])
-           
-            # K,S,E = dlqr(A,B,Q,R)
-            # setattr(driver, "K_lqr", K)
             ################ MPCC CONTROLLER ############################
-
             # Add the current surface evaluator to the controller
             setattr(driver, "soilShapeEvaluator", self.soilShapeEvaluator)
             setattr(driver, "dfl", self.dfl)
@@ -682,39 +753,40 @@ class AgxSimulator():
 
             # x_array.append(np.array([pos[0], pos[2]]))
             # eta_array.append(np.array([vel[0], vel[2], soil_force[0], soil_force[2], fill_2]))
-            print(x_initial_tip)
             
-            if self.model_has_surface_shape:
-                # define the path to be followed by MPCC
-                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
-                                                  3.0, 3.5, 4.0, 4.5, 5.0,
-                                                  5.5, 6.0, 6.5, 7.0,7.5])
-                y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([ -0.07,  -0.25, -0.25, -0.25, -0.25,
-                                             -0.25,  -0.25, -0.25, -0.25, -0.25,
-                                             -0.25,  -0.25, -0.25, -0.25, -0.25])
+            # define the path to be followed by MPCC
+            # x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
+            #                                   3.0, 3.5, 4.0, 4.5, 5.0,
+            #                                   5.5, 6.0, 6.5, 7.0, 7.5,
+            #                                   8.0, 8.5, 9.0, 9.5, 10.0])
+            # y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
+            # y_path = y_soil + np.array([ -0.07,  -0.45, -0.45, -0.45, -0.45,
+            #                              -0.45,  -0.45, -0.45, -0.45, -0.45,
+            #                              -0.45,  -0.45, -0.45, -0.45, -0.45,
+            #                              -0.45,  -0.45, -0.45, -0.45, -0.45])
+            x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 3.0, 3.5])
 
-                x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.5   ,  -0.5 , -2.5 , -2.5 , -200, -200 , -200, -70000*self.scaling, -70000*self.scaling, 0.0])
-                x_max = np.array([ 2.                , 0.0  , 2.5   ,   2.5 ,  2.5 ,  2.5 ,  200,  200 ,  200,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
-                
-                # x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.2   ,   0.0 , -2.5 , -2.5 , -70000*self.scaling, -70000*self.scaling, 0.0])
-                # x_max = np.array([ 5.                , 0.0  , 2.4   ,   2.5 ,  2.5 ,  2.5 ,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
-                
-                u_min = np.array([ -100.*self.scaling   , -100000*self.scaling ,  -100000*self.scaling ])
-                u_max = np.array([  100000.*self.scaling,   100000*self.scaling ,   100000*self.scaling ])
+            y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
+            y_path = y_soil + np.array([ -0.07, -0.35, -0.35, -0.35, -0.35, -0.25, -0.02])
 
+            # x_min = np.array([ x_initial_tip-0.1 ,  -3. , 0.5 , -0.5 , -2.5 , -2.5 , -400, -400 , -400, -70000*self.scaling, -70000*self.scaling, 0.0])
+            # x_max = np.array([ 2.                , 5.0  , 2.5 ,  2.5 ,  2.5 ,  2.5 ,  400,  400 ,  400,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+            
+            x_min = np.array([ x_initial_tip-0.1 ,  -3. , 0.5 , -0.5 , -2.5 , -2.5 , -80000*self.scaling, -80000*self.scaling, 0.0               , -70000*self.scaling, -70000*self.scaling,-70000*self.scaling, -70000*self.scaling])
+            x_max = np.array([ 2.                , 5.0  , 2.5 ,  2.5 ,  2.5 ,  2.5 ,  80000*self.scaling,  80000*self.scaling, 3000.*self.scaling,  70000*self.scaling,  70000*self.scaling, 70000*self.scaling,  70000*self.scaling])
+            # x_min = np.array([ x_initial_tip-0.1 ,  -2. , 0.5 , -0.5 , -2.5 , -2.5 ,  -70000*self.scaling, -70000*self.scaling, 0.0])
+            # x_max = np.array([ 2.                , 2.0  , 2.5 ,  2.5 ,  2.5 ,  2.5 ,   70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+            
+            # x_min = np.concatenate((np.array([ x_initial_tip-0.1 ,  -2. , 0.5 , -0.5 , -2.5 , -2.5 ,  -70000*self.scaling, -70000*self.scaling, 0.0]),-10000000*np.ones(45)))
+            # x_max = np.concatenate((np.array([ 2.                , 0.0  , 2.5 ,  2.5 ,  2.5 ,  2.5 ,   70000*self.scaling,  70000*self.scaling, 3000.*self.scaling]),10000000*np.ones(45)))
+            
+            u_min = np.array([ -100.*self.scaling   , -70000*self.scaling ,  -70000*self.scaling ])
+            u_max = np.array([  15000.*self.scaling,   70000*self.scaling ,   70000*self.scaling ])
+
+            if self.set_height_from_previous: 
+                pass
             else:
-
-                x_min = np.array([ x_initial_tip-0.1,  -1.,  -0.1, -1.5, -70000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , 0.1 ,   1.5,  1.3,  70000*self.scaling,  10000*self.scaling, 1000.*self.scaling])
-                u_min = np.array([ 0.                , -5000*self.scaling])
-                u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
-
-                # define the path to be followed by MPCC
-                x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 4.0])
-                y_path = np.array([  0., -0.1, -0.3, -0.2, -0.2])
-
-            spl_path = spline_path(x_path,y_path)
+                self.spl_path = spline_path(x_path,y_path)
 
 
             # instantiate the MPCC object
@@ -723,9 +795,16 @@ class AgxSimulator():
                         x_min, x_max,
                         u_min, u_max,
                         dt = self.dt_data, N = 50)
+            
+            # # # # instantiate the MPCC object
+            # mpcc = MPCC(np.zeros((54, 54)),
+            #             np.zeros((54, self.dfl.plant.n_u)),
+            #             x_min, x_max,
+            #             u_min, u_max,
+            #             dt = self.dt_data, N = 30)
 
             #  set the observation function, path object and linearization function
-            setattr(mpcc, "path_eval", spl_path.path_eval)
+            setattr(mpcc, "path_eval",  self.spl_path .path_eval)
             setattr(mpcc, "get_soil_surface", self.soilShapeEvaluator.soil_surf_eval) 
 
             fig = plt.figure()
@@ -737,26 +816,37 @@ class AgxSimulator():
 
             if self.model_has_surface_shape:
                 print('Linearizing with soil shape')
-                setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics)
+                # setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics)
+                setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics_koop)
             else:
                 setattr(mpcc, "get_linearized_model", self.dfl.linearize_soil_dynamics_no_surface)
 
             self.mpcc = copy.copy(mpcc)
 
             # define the MPCC cost matrices and coef.
-            Q = 1000*sparse.diags([1., 1.])
-            R = 1.*sparse.diags([1., 1., 1., 1.])
-            q_theta = 1.
+            Q = 50.*sparse.diags([1.,10.])
+            R = 1.*sparse.diags([1., 1., 1., 0.001])
+            q_theta = 5.0 #self.q_theta_mpcc
             pos_tip, vel_tip, acl_tip, ang_tip, omega, alpha = measureBucketState(sphere3, shovel)
+            
 
-            x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
-                                            vel_tip[0], vel_tip[2], omega[1],
-                                            acl_tip[0], acl_tip[2], alpha[1],
-                                            0.        ,  0.       ,     0.]), np.array([-10.0])))
-           
+            x_i = np.array([ pos_tip[0], pos_tip[2], ang_tip,  vel_tip[0], vel_tip[2], omega[1]])
+            eta_i = np.array([acl_tip[0], acl_tip[2], alpha[1], 0.,  0., 0.])
+            path_initial = [-10,-9.5,-9.0,-8.5,-8.5]
+            x_0 =  np.concatenate((self.dfl.g_Koop(x_i,eta_i,_), np.array([path_initial[self.consecutive_scoop_i]])))
+
+            # x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
+            #                                 vel_tip[0], vel_tip[2], omega[1],
+            #                                 acl_tip[0], acl_tip[2], alpha[1],
+            #                                 0.        ,  0.       ,     0.]), np.array([-10.0])))
+            driver.last_x_opt = x_0
             # x_0 = np.concatenate((np.array([pos_tip[0], pos_tip[2], ang_tip ,
             #                                 vel_tip[0], vel_tip[2], omega[1],
             #                                 0.        ,  0.       ,     0.]), np.array([-10.0])))
+
+            # x_0 = np.concatenate((self.dfl.g_Koop(np.array([pos_tip[0], pos_tip[2], ang_tip]),
+            #                                     np.array([ vel_tip[0], vel_tip[2], omega[1],
+            #                                                  0.        ,  0.       ,     0.]),_), np.array([-10.0])))
             # x_0 = x_0 - np.concatenate((self.x_offset,self.e_offset,np.array([0.0])))
             print("x_0:", x_0)
             print("x_min:", x_min)
@@ -778,9 +868,10 @@ class AgxSimulator():
         agx.setNumThreads( 0 )
         n = int(agx.getNumThreads() / 2 - 1)
         agx.setNumThreads( n )
-
+        
         # Setup initial camera view
-        createHelpText(sim, app)
+        if app:
+            createHelpText(sim, app)
 
         return terrain, shovel, driver, sphere3
    
@@ -796,39 +887,76 @@ class AgxSimulator():
         S_data   = []
         Eta_data = []
 
-        sim, app = self.createSimulation(None)
+        Y_data= []
+
+        if self.control_mode == "mpcc":
+            no_graphics = False
+        else:
+            no_graphics = False
+
+        sim, app = self.createSimulation(no_graphics)
+
+        now = datetime.now()
+        date_time = now.strftime("%m_%d_%Y_%H_%M_%S")
 
         for i in range(N_traj):
-            
+            print(i)
             t_array = []
             x_array = []
             u_array = []
             s_array = []
             eta_array = []
 
+            y_array = []
+
             # Set the simulation scene
             sim, app, ter, shov, driver, locksphere = self.setScene(sim, app)
-           
+
+
             sim.setTimeStep(self.dt_data)
-            app.setTimeStep(self.dt_data)                    
+            if app:
+                app.setTimeStep(self.dt_data)                    
 
             # Extract soil shape along the bucket excavation direction
             x_hf,z_hf = self.extractSoilSurface(ter, sim)          
             soilShapeEvaluator = SoilSurfaceEvaluator(x_hf, z_hf)
+    
+            # app.setupVideoCaptureRenderTotexture()
+            # app.setAllowWindowResizing(False)
 
-            # Step the simulation forward
-            # sim.stepForward()
+            # vc = app.getVideoServerCapture()
+            # vc.setFilename("agx_mov")
+            
+            # print('----------------------------------------------------------')
+            # print(vc.setOutputVideoCodec(1))
+            # print('----------------------------------------------------------')
+
+
+            # vc.setEnableSyncWithSimulation(True)
+            # vc.startCapture()
+
+            # time.sleep(10.0)
+            myCapture = app.getImageCapture()
+            myCapture.setMaxImages(20)
+            myCapture.setFps(0.3)
+            myCapture.setDirectoryPath('captured_images/'+date_time+'/')
+            myCapture.setPrefix(str(self.consecutive_scoop_i)+'test')  
+            myCapture.startCapture() 
+            # myCapture.writeImage('image', 0)
 
             # Perform simulation
             while sim.getTimeStamp() <= T:
-
-                t_array.append(sim.getTimeStamp())
 
                 # Measure all the states
                 pos_tip, vel_tip, acl_tip, ang_tip, omega, alpha = measureBucketState(locksphere, shov)
                 soil_force, fill = measureSoilQuantities(shov, ter)
                 surf, surf_d, surf_dd, surf_ddd = soilShapeEvaluator.soil_surf_eval(pos_tip[0])
                
+                if pos_tip[0] > -.55:
+                    break
+
+                t_array.append(sim.getTimeStamp())
+
                 # Compose data in relevant arrays
                 x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip, vel_tip[0], vel_tip[2], omega[1]]))
                 # x_array.append(np.array([pos_tip[0], pos_tip[2], ang_tip ]))
@@ -838,11 +966,22 @@ class AgxSimulator():
                                            self.scaling*soil_force[2],
                                            self.scaling*fill]))
 
-                # eta_array.append(np.array([vel_tip[0], vel_tip[2], omega[1],
-                #                            self.scaling*soil_force[0],
-                #                            self.scaling*soil_force[2],
-                #                            self.scaling*fill]))
+                ##############################################
+                fill_dm  = ter.getDynamicMass(shov)  
+                fill_dlf = ter.getLastDeadLoadFraction(shov)
+                fill_am  = ter.getSoilAggregateMass(shov,0)
+                
+                agx_pbhf = ter.getSoilParticleBoundedHeightField()
 
+                hf_grid_bucket = ter.getClosestGridPoint(agx.Vec3( pos_tip[0],  pos_tip[1],  pos_tip[2]))
+                x_hf_bucket,  y_hf_bucket = hf_grid_bucket[0], hf_grid_bucket[1]
+
+                z_hf = agx_pbhf.getHeight(x_hf_bucket,  y_hf_bucket)
+                
+                y_array.append(np.array([fill_dm, fill_dlf, fill_am, z_hf]))
+
+                
+                ##############################################    
                 s_array.append(np.array([surf, surf_d, surf_dd]))
 
                 # app.executeOneStepWithGraphics()
@@ -856,44 +995,63 @@ class AgxSimulator():
                 
 
                 # # Step the simulation forward
-                if self.control_mode == "mpcc":
-                    app.executeOneStepWithGraphics()
-                    # sim.stepForward()
-                    # time.sleep(2.0)
+                if self.control_mode == "mpcc" or self.control_mode == "trajectory_control":
+                    if app:
+                        app.executeOneStepWithGraphics()
+                    else: 
+                        sim.stepForward()
                 else:
-                    sim.stepForward()
-                    # app.executeOneStepWithGraphics()
+                    # sim.stepForward()
+                    app.executeOneStepWithGraphics()
 
 
                 # Measure the used control inputs
                 bucket_force = driver.force
                 bucket_torque = driver.torque
 
-                # print("in collect data: ", 10.0*mass*r[0])
 
                 u_array.append(np.array([ self.scaling*bucket_force[0],
                                           self.scaling*(bucket_force[2] - 10.0*mass),
                                           self.scaling*(bucket_torque   - 10.0*mass*r[0])]))
-                
+            myCapture.stopCapture() 
+
+            hf_final_agx = ter.getHeightField()
+            self.agx_heightField_previous = hf_final_agx
+            self.consecutive_scoop_i += 1
+
             t_array   = np.array(t_array)
             x_array   = np.array(x_array)
             u_array   = np.array(u_array)
             s_array   = np.array(s_array)
             eta_array = np.array(eta_array)
 
+            y_array = np.array(y_array)
+
             T_data.append(t_array)
             X_data.append(x_array)
             U_data.append(u_array)
             S_data.append(s_array)
             Eta_data.append(eta_array)
+            Y_data.append(y_array)
 
         T_data = np.array(T_data)
         X_data = np.array(X_data)
         U_data = np.array(U_data)
         S_data = np.array(S_data)
         Eta_data = np.array(Eta_data)
+        Y_data = np.array(Y_data)
 
-        return T_data, X_data, U_data, S_data, Eta_data
+        # print('----------------------------------------------------------')
+        # vc.stopCapture()        
+        # print('----------------------------------------------------------')
+        # # vc.closeExternalFFMPEGProcess()   
+        
+        # print('----------------------------------------------------------')
+        # vc.stopProcess()
+
+        # print(vc.getImageNum())
+
+        return T_data, X_data, U_data, S_data, Eta_data, Y_data
 
 class ForceDriverPID(agxSDK.StepEventListener):
     
@@ -914,8 +1072,7 @@ class ForceDriverPID(agxSDK.StepEventListener):
         self.dt_control = dt_control
 
         lock.setEnableComputeForces(True)
-        self.sd = app.getSceneDecorator()
-
+        
         self.theta_d = -0.2
         self.ang_d = 1.55
         self.v_d = 0.2
@@ -964,17 +1121,19 @@ class ForceDriverPID(agxSDK.StepEventListener):
         s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos_tip[0])
 
         D = s_nom - self.pos_tip[2]
-
-        if (t-self.t_last_setpoint) > .2:
+        print(D)
+        if (t-self.t_last_setpoint) > .5:
             
             self.t_last_setpoint = t
             # generate pseudo-random velocity set point
             if D < 0.15:
+                self.theta_d = np.random.uniform(low = -0.45, high = -0.05)
                 self.theta_d = np.random.uniform(low = -0.45, high = -0.35)
-            elif D >= 0.15 and D < 0.25:
-                self.theta_d = np.random.uniform(low = -0.1, high = -0.05)
-            elif D >= 0.25:
-                self.theta_d = np.random.uniform(low = 0.1 , high = 0.25)
+
+            elif D >= 0.15 and D < 0.3:
+                self.theta_d = np.random.uniform(low = -0.25, high = 0.25)
+            elif D >= 0.3:
+                self.theta_d = np.random.uniform(low = -0.1 , high = 0.45)
             
             self.theta_d  += np.random.uniform(low = -0.1 , high = 0.1)
 
@@ -1015,9 +1174,135 @@ class ForceDriverPID(agxSDK.StepEventListener):
         self.force  = force 
         self.torque = torque
 
-        self.force[0] += np.random.uniform(low = -5000, high = 5000)
-        self.force[2] += np.random.uniform(low = -5000, high = 5000)
-        self.torque   += np.random.uniform(low = -5000, high = 5000)
+        # self.force[0] += np.random.uniform(low = -5000, high = 5000)
+        # self.force[2] += np.random.uniform(low = -5000, high = 5000)
+        # self.torque   += np.random.uniform(low = -5000, high = 5000)
+        
+        self.setBodyForce(self.force)
+        self.setBodyTorque(self.torque)
+
+class ForceDriverTrajectory(agxSDK.StepEventListener):
+    
+    def __init__(self, app, lockSphere, lock, hinge, prismatic_x, prismatic_z, terrain, shovel, operations, dt_control):
+        super(ForceDriverTrajectory, self).__init__()
+        self.lockSphere = lockSphere
+        self.lock = lock
+        self.hinge = hinge
+
+        self.prismatic_x = prismatic_x
+        self.prismatic_z = prismatic_z
+
+        self.bucket = shovel.getRigidBody()
+        self.shovel = shovel
+        self.terrain = terrain
+        self.operations = operations
+        self.forceLimit = 5e4
+        self.dt_control = dt_control
+
+        lock.setEnableComputeForces(True)
+        self.sd = app.getSceneDecorator()
+
+        self.theta_d = -0.2
+        self.ang_d = 1.55
+        self.v_d = 1.2
+
+        self.path_progression = -10.
+
+        self.soil_force_last = agx.Vec3(0.,0.,0.)
+
+        self.force  = self.operations[0]
+        self.torque = 0.0
+
+        self.t_last_control =  -100.
+        self.t_last_setpoint = -100.
+
+        self.integ_e_x = 0.0
+        self.integ_e_z = 0.0
+        self.integ_e_omega = 0.0
+        self.integ_e_ang = 0.0
+
+        # self.prismatic_x.getLock1D().setEnable( False )
+        # self.prismatic_z.getLock1D().setEnable( False )
+        # self.hinge.getLock1D().setEnable( False )
+
+
+    def setBodyForce(self, force):
+        self.lockSphere.setForce(force)
+
+    def setBodyTorque(self, torque):
+
+        torque = agx.Vec3(0., torque, 0.)
+        self.lockSphere.setTorque(torque)
+
+    def post(self,t):
+        
+        self.soil_force_last = self.terrain.getSeparationContactForce(self.shovel)
+        # print('Soil force in post integration: ',self.soil_force_last)
+
+    def pre(self, t):
+
+        force  = self.operations[0]
+        torque = self.operations[1]
+        
+        # Measure all the states
+        self.pos_tip, self.vel_tip, self.acl_tip, self.ang_tip, self.omega, self.alpha = measureBucketState(self.lockSphere, self.shovel)
+ 
+        
+        s_nom, s_dash_nom, s_dash_dash_nom, s_dash_dash_dash_nom = self.soilShapeEvaluator.soil_surf_eval(self.pos_tip[0])
+        self.path_progression += self.v_d*0.01
+       
+        x_d, y_d = self.path_eval(self.path_progression)
+        dxds, dyds = self.path_eval(self.path_progression, d = 1)
+        
+        self.v_x_d = dxds*self.v_d
+        self.v_z_d = dyds*self.v_d
+
+
+        self.t_last_control = t
+
+        e_v_x = self.vel_tip[0] - self.v_x_d
+        e_v_z = self.vel_tip[2] - self.v_z_d 
+        # e_omega = self.omega - self.omega_d
+
+        e_ang = self.ang_tip - self.ang_d 
+
+        self.integ_e_x += e_v_x
+        self.integ_e_z += e_v_z
+        self.integ_e_ang += e_ang
+
+        pos     = self.bucket.getCmPosition()   
+        pos_tip = self.lockSphere.getPosition()   
+        r       = pos_tip - pos
+
+        mass = self.bucket.getMassProperties().getMass() - 3.28
+
+        force[0]  = -1000.*(1.*(e_v_x) + .5*self.integ_e_x)
+        force[2]  = -1500.*(1.*(e_v_z) + .5*self.integ_e_z) + 10.0*mass
+        torque    = -5000.*(1.*np.sign(e_ang)*e_ang**2   + .01*self.integ_e_ang + 0.20*self.omega[1]) + 10.0*mass*r[0]
+
+        # # PID - VELOCITY CONTROL
+        # # calculate errors and error integral
+
+        # e_p_x = self.pos_tip[0] - x_d
+        # e_p_z = self.pos_tip[2] - y_d 
+        # e_ang = self.ang_tip - self.ang_d 
+
+        # self.integ_e_x += e_p_x
+        # self.integ_e_z += e_p_z
+        # self.integ_e_ang += e_ang
+
+        # pos     = self.bucket.getCmPosition()   
+        # pos_tip = self.lockSphere.getPosition()   
+        # r       = pos_tip - pos
+
+        # mass = self.bucket.getMassProperties().getMass() - 3.28
+
+        # force[0]  = -2000.*(1.*(e_p_x) + .05*self.integ_e_x)
+        # force[2]  = -2000.*(1.*(e_p_z) + .05*self.integ_e_z) + 10.0*mass
+        # torque    = -5000.*(1.*np.sign(e_ang)*e_ang**2   + .01*self.integ_e_ang + 0.20*self.omega[1]) + 10.0*mass*r[0]
+
+        self.force  = force 
+        self.torque = torque
         
         self.setBodyForce(self.force)
         self.setBodyTorque(self.torque)
@@ -1038,7 +1323,6 @@ class ForceDriverDFL(agxSDK.StepEventListener):
 
 
         lock.setEnableComputeForces(True)
-        self.sd = app.getSceneDecorator()
 
         self.v_x_low  =  1.0
         self.v_x_high =  2.0
@@ -1059,6 +1343,10 @@ class ForceDriverDFL(agxSDK.StepEventListener):
 
         self.integ_e_x = 0.0
         self.integ_e_z = 0.0
+        self.integ_e_omega = 0.0
+        self.integ_e_ang = 0.0
+
+        self.pid_array = []
 
 
     def setBodyForce(self, force):
@@ -1082,8 +1370,11 @@ class ForceDriverDFL(agxSDK.StepEventListener):
     def pre(self, t):
 
         force  = agx.Vec3( 0.0, 0.0, 0.0)
+        force_pid  = agx.Vec3( 0.0, 0.0, 0.0)
+
         torque = 0.0
-        
+        torque_pid = 0.0
+
         # self.pos, self.vel, self.acl, self.angle, self.omega, self.alpha, self.fill = self.measureState()
         self.pos_tip, self.vel_tip, self.acl_tip, self.angle_tip, self.omega, self.alpha = measureBucketState(self.lockSphere, self.shovel)
         self.fill =  self.terrain.getDynamicMass(self.shovel)
@@ -1098,13 +1389,60 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             # xi = self.dfl.g_Koop(np.array([self.pos[0], self.pos[2]]),np.array([self.vel[0], self.vel[2], self.fill]))
             # xi = 
             # xi = xi - np.concatenate((self.x_offset,self.e_offset))           
-        
-        xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.acl_tip[0], self.acl_tip[2], self.alpha[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        x = np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1]])
+        eta = np.array([self.acl_tip[0], self.acl_tip[2], self.alpha[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        xi =  self.dfl.g_Koop(x,eta, None )
+
+
         # xi =  np.array([ self.pos_tip[0], self.pos_tip[2], self.angle_tip,  self.vel_tip[0], self.vel_tip[2], self.omega[1], self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
+        # xi = self.dfl.g_Koop(np.array([ self.pos_tip[0],  self.pos_tip[2],  self.angle_tip]),
+        #                      np.array([ self.vel_tip[0],  self.vel_tip[2],  self.omega[1],
+        #                                 self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill]),0)
+        
+
+        e_x     = self.pos_tip[0] - self.last_x_opt[0]
+        e_z     = self.pos_tip[2] - self.last_x_opt[1]
+        e_ang   = self.angle_tip  - self.last_x_opt[2]
+
+        e_v_x   = self.vel_tip[0] - self.last_x_opt[3]
+        e_v_z   = self.vel_tip[2] - self.last_x_opt[4]
+        e_omega = self.omega[1]   - self.last_x_opt[5]
+
+        self.integ_e_x += e_v_x
+        self.integ_e_z += e_v_z
+        self.integ_e_ang += e_ang
+
+
+        # force_pid[0]  = -1000.*(1.*(e_v_x) + .5*self.integ_e_x)
+        # force_pid[2]  = -1500.*(1.*(e_v_z) + .5*self.integ_e_z)
+        # torque_pid    = -5000.*(1.*np.sign(e_ang)*e_ang**2   + .01*self.integ_e_ang + 0.20*self.omega[1]) 
+        force_pid[0]  = -1000.*(self.integ_e_x)
+        force_pid[2]  = -1500.*(self.integ_e_z)
+        torque_pid    = -5000.*(self.integ_e_ang) 
+
+
+        sliding_x       =  10.*e_x +  e_v_x 
+        sliding_z       =  10.*e_z +  e_v_z 
+        sliding_ang     =  10.*e_ang +  e_omega 
+
+        # u_sliding_x     = -4000*np.sign(sliding_x)
+        # u_sliding_z     = -4000*np.sign(sliding_z)
+        # u_sliding_ang   = -4000*np.sign(sliding_ang)
+
+        u_sliding_x     = -7000*np.clip(sliding_x,-1,1)
+        u_sliding_z     = -7000*np.clip(sliding_z,-1,1)
+        u_sliding_ang   = -7000*np.clip(sliding_ang,-1,1)
+
+
+        # print("e_ang: ",e_ang)
+        # print("e_omega: ",e_omega)
+        # print("u_sliding: ",u_sliding_ang)
 
         print('---------------------------------------------')
         ####################### MPCC CONTROL #########################
-        U = self.mpcc.control_function(xi, t)
+        U, x_opt = self.mpcc.control_function(xi, t)
+        
+        self.last_x_opt = x_opt
         
         print('xi: ', xi)
         print("x_min constraints: ", xi<self.mpcc.x_min[:-1])
@@ -1123,11 +1461,25 @@ class ForceDriverDFL(agxSDK.StepEventListener):
         mass = self.bucket.getMassProperties().getMass() - 3.28
 
 
-        force[0] = U[0]/self.scaling
-        force[2] = U[1]/self.scaling + 10.0*mass
-        torque   = U[2]/self.scaling + 10.0*mass*r[0]
+        force[0] =  u_sliding_x   + U[0]/self.scaling
+        force[2] =  u_sliding_z   + U[1]/self.scaling + 10.0*mass
+        torque   =  u_sliding_ang + U[2]/self.scaling + 10.0*mass*r[0]
 
+        print(u_sliding_ang)
+        print(torque)
+        # print("--------PID/TOTAL-----------")
+        # a1 = force_pid[0] / (U[0]/self.scaling)
+        # a2 = force_pid[2] / (U[1]/self.scaling)
+        # a3 =  torque_pid / (U[2]/self.scaling)
+
+        self.pid_array.append(np.array([ sliding_x, sliding_z, sliding_ang]))
         # print("in function: ", 10.0*mass*r[0])
+        # if t > 4.0:
+        #     a = np.array(self.pid_array)
+        #     plt.plot(a[:,0])
+        #     plt.plot(a[:,1])
+        #     plt.plot(a[:,2])
+        #     plt.show()
 
         self.t_last_control = t
         
@@ -1143,17 +1495,17 @@ class DiggingPlant():
     def __init__(self):
 
         # Linear part of states matrices
-        # self.n_x    = 6
+        self.n_x    = 6
+        self.n_eta  = 7
+        self.n_u    = 3
+
+        # self.n_x    = 3
         # self.n_eta  = 6
         # self.n_u    = 3
 
-        self.n_x    = 6
-        self.n_eta  = 6
-        self.n_u    = 3
-
         self.n      = self.n_x + self.n_eta
 
-        # # User defined matrices for DFL
+        # # # User defined matrices for DFL
         self.A_cont_x  = np.array([[ 0., 0., 0., 1., 0., 0.],
                                    [ 0., 0., 0., 0., 1., 0.],
                                    [ 0., 0., 0., 0., 0., 1.],
@@ -1195,10 +1547,10 @@ class DiggingPlant():
     def soil_surf_eval(self, x):
         # Evaluate the spline soil surface and its derivatives
         
-        surf     = splev(x, self.tck_sigma, der = 0, ext=3)
-        surf_d   = splev(x, self.tck_sigma, der = 1, ext=3)
-        surf_dd  = splev(x, self.tck_sigma, der = 2, ext=3)
-        surf_ddd = splev(x, self.tck_sigma, der = 3, ext=3)
+        surf     = splev(x, self.tck_sigma, der = 0, ext = 3)
+        surf_d   = splev(x, self.tck_sigma, der = 1, ext = 3)
+        surf_dd  = splev(x, self.tck_sigma, der = 2, ext = 3)
+        surf_ddd = splev(x, self.tck_sigma, der = 3, ext = 3)
 
         return surf, surf_d, surf_dd, surf_ddd
 
@@ -1225,7 +1577,9 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
     #     s = s.reshape(-1,s.shape[-1])
     #     e = e.reshape(-1,e.shape[-1])
 
-    for i in range(x.shape[0]):
+    for i in range( x.shape[0] - 1, -1, -1):
+        print("i: ", i)
+
         axs[0,0].plot(t[0,:],x[i,:,0],'r',marker=".")
         axs[0,0].plot(t[0,:],x[i,:,1],'g',marker=".")
         axs[0,0].plot(t[0,:],x[i,:,2],'b',marker=".")
@@ -1341,7 +1695,7 @@ def plotData2(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compar
         axs[3,1].plot(t[0,:],s[i,:,1],'r', marker=".")
         axs[3,1].set_title("Soil gradient")
 
-        axs[4,1].plot(u[i,:,0],u[i,:,2],'.')
+        # axs[4,1].plot(u[i,:,0],u[i,:,2],'.')
 
         if comparison:
             break
@@ -1380,6 +1734,93 @@ def plotData2(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compar
     fig.tight_layout()
     plt.show()
 
+def plotData3(t, x, u, s, e, dfl, t2=None, x2=None, u2=None, s2=None, e2=None, comparison=False):
+
+    fig, axs = plt.subplots(5,2, figsize=(8,10))
+    
+    y = []
+    
+    x_shape = x.shape
+
+    for j in range(x_shape[0]):
+        for i in range(x_shape[1]):
+            y.append(dfl.g_Koop(x[j,i,:], e[j,i,:], s[j,i,:]))
+
+    y = np.array(y)
+
+    for i in range( x.shape[0] - 1, -1, -1):
+        print("i: ", i)
+
+        axs[0,0].plot(t[0,:],x[i,:,0],'r',marker=".")
+        axs[0,0].plot(t[0,:],x[i,:,1],'g',marker=".")
+        axs[0,0].plot(t[0,:],x[i,:,2],'b',marker=".")
+        axs[0,0].set_title("tip position")
+
+        axs[1,0].plot(t[0,:],x[i,:,3],'r',marker=".")
+        axs[1,0].plot(t[0,:],x[i,:,4],'g',marker=".")
+        axs[1,0].plot(t[0,:],x[i,:,5],'b',marker=".")
+        axs[1,0].set_title("tip velocity")
+
+        axs[2,0].plot(t[0,:],y[:,6],'r', marker = ".")
+        axs[2,0].plot(t[0,:],y[:,7],'g', marker = ".")
+        axs[2,0].set_title("soil force")
+
+        axs[3,0].plot(t[0,:],u[i,:,0],'r', marker = ".")
+        axs[3,0].plot(t[0,:],u[i,:,1],'g', marker = ".")
+        axs[3,0].plot(t[0,:],u[i,:,2],'b', marker = ".")
+        axs[3,0].set_title("bucket force")
+
+        axs[4,0].plot(t[0,:],y[:,8],'r')
+        axs[4,0].set_title("Bucket Fill")
+
+        # soil shape variables
+        axs[0,1].plot(t[0,:],y[:,9],'k')
+        axs[0,1].plot(t[0,:],y[:,10],'r', marker=".")
+        axs[0,1].set_title("f/m")
+
+        # soil shape variables
+        axs[1,1].plot(t[0,:],y[:,11],'k')
+        axs[1,1].plot(t[0,:],y[:,12],'r', marker=".")
+        axs[1,1].set_title("f trig")
+
+        # axs[4,1].plot(u[i,:,0],u[i,:,2],'.')
+
+        if comparison:
+            break
+
+        # axs[2,1].plot(t[0,:],s[i,:,2],'r', marker=".")
+        # axs[2,1].set_title("Soil Curvature")
+    
+    if comparison:
+
+        axs[0,0].plot(t[0,:],x2[:,0],'r--')
+        axs[0,0].plot(t[0,:],x2[:,1],'g--')
+        axs[0,0].plot(t[0,:],x2[:,2],'b--')
+        axs[0,0].set_title("tip position")
+
+        axs[1,0].plot(t[0,:],x2[:,3],'r--')
+        axs[1,0].plot(t[0,:],x2[:,4],'g--')
+        axs[1,0].plot(t[0,:],x2[:,5],'b--')
+        axs[1,0].set_title("tip velocity")
+
+        axs[2,0].plot(t[0,:],e2[:,0],'r--')
+        axs[2,0].plot(t[0,:],e2[:,1],'g--')
+        axs[2,0].set_title("soil force")
+
+        axs[3,0].plot(t[0,:],u2[:,0],'r--')
+        axs[3,0].plot(t[0,:],u2[:,1],'g--')
+        axs[3,0].plot(t[0,:],u2[:,2],'b--')
+        axs[3,0].set_title("bucket force")
+
+        axs[4,0].plot(t[0,:],e2[:,2],'r--')
+        axs[4,0].set_title("Bucket Fill")
+
+
+
+
+    plt.subplots_adjust(left = 0.2, top = 0.89, hspace = 0.4)
+    fig.tight_layout()
+    plt.show()
 
 def saveData(t, x, u, s, e):
 
@@ -1400,16 +1841,25 @@ def loadData(file_name):
 
     return t, x, u, s, e
 
+def g_Koop_x_eta(self,x,eta,s):
+
+        poly = PolynomialFeatures(self.koop_poly_order,include_bias=False)
+        xi = np.array(np.concatenate((x,eta)))
+        y = poly.fit_transform(np.expand_dims(xi,axis=0))
+
+        return y[0,:]
+
 def main(args):
 
     dt_control = 0.01
     dt_data = 0.01
-    T_traj_data = 5.0
-    N_traj_data = 4
-
-    plot_data = True
+    T_traj_data = 7.5
+    N_traj_data = 1
+    
+    plot_data = False
     save_data = False
-    use_saved_data = True
+    use_saved_data = False
+    
     T_traj_test = 5.0
     N_traj_test = 1
 
@@ -1422,17 +1872,772 @@ def main(args):
     setattr(agx_sim, "dfl", dfl)
    
     if use_saved_data:
-        t, x, u, s, e = loadData('data.npz')
+        t, x, u, s, e = loadData('data/data_nick_not_flat.npz')
     else:
-        t, x, u, s, e = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
+        t, x, u, s, e, y = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
+   
+    fig, axs = plt.subplots(2,1, figsize=(8,10))
+    print(y.shape)
+    axs[0].plot(t[0,:],y[0,:,0]/y[0,-1,0],'r',marker=".")
+    axs[0].plot(t[0,:],y[0,:,1]/y[0,-1,1],'g',marker=".")
+    axs[0].plot(t[0,:],y[0,:,2]/y[0,-1,2],'b',marker=".")
+    axs[0].set_title("tip position")
+    
+    axs[1].plot(t[0,:],y[0,:,3],'r',marker=".")
+    axs[1].plot(t[0,:],s[0,:,0],'g',marker=".")
+    axs[1].plot(t[0,:],x[0,:,1],'b',marker=".")
+    axs[1].set_title("surcharge height")
+    plt.show()
+
+    exit()
+
+    if save_data:
+        saveData(t, x, u, s, e)
     
     if plot_data:
         plotData2(t, x, u, s, e)
-    
-    if save_data:
-        saveData(t, x, u, s, e)
+        # plotData2(t, x[trial_inid, :, :],u[trial_inid, :, :],s[trial_inid, :, :],e[trial_inid, :, :])
 
-    agx_sim.dfl.regress_model_custom(x,e,u,s)
+    # fig = plt.figure(figsize=[6.4, 2.8])
+    # ax = fig.add_subplot(1, 1, 1)
+    # ax.quiver(x[0, ::10, 0],
+    #           x[0, ::10, 1],
+    #           -0.5*np.cos(x[0, ::10, 2]),
+    #            0.5*np.sin(x[0, ::10, 2]), units = 'xy',headwidth = 0.0, 
+    #            headlength = 0.0, scale = 2.2,width = 0.005)
+    # ax.plot(x[0, :, 0], x[0, :, 1],color = 'black')
+    
+    # ax.set_ylabel(r'$y$   $(m^2)$')
+    # ax.set_xlabel(r'$x$   $(m^2)$')
+    # ax.axis('equal')
+    # plt.tight_layout()
+    # plt.show()
+    
+    
+    dfl.koop_poly_order = 1
+    # setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_2)
+
+    # agx_sim.dfl.regress_model_Koop_with_surf(x[trial_inid, :, :],e[trial_inid, :, :],u[trial_inid, :, :],s[trial_inid, :, :])
+    agx_sim.dfl.regress_model_Koop_with_surf(x,e,u,s)
+    # agx_sim.dfl.regress_model_custom(x,e,u,s)
+
+    def evaluate_error_dataset_size(t_train, x_train, u_train, s_train, e_train ):
+
+        N_data_array = np.array([50,75,150,200,250,300,400,500,750,1000,1250,1500,2000,5000,10000,20000])
+        
+        sum_error_dfl_total  = np.zeros((len(N_data_array), 6))
+
+        N_train     = 10
+        N_tests     = 15
+        N_samples   = 300
+        
+        for i_test in range(N_tests):
+            
+            t_test, x_test, u_test, s_test, e_test = agx_sim.collectData(T = 5., N_traj = 1)
+
+            k_horizon = 20
+
+            k_0_array = np.random.randint(low = 0, high = x_test.shape[1]-k_horizon , size = N_samples)
+
+            for i_dataset in range(len(N_data_array)):
+                
+                N_data = N_data_array[i_dataset]
+                
+                print(i_test,N_data )
+
+                for i_training in range(N_train):
+                    
+                    dfl.koop_poly_order = 1
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train, e_train, u_train, s_train, N=N_data)
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_dfl = np.zeros((k_horizon + 1,n_koop ))
+                        y_dfl[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_dfl[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_dfl[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_dfl      =  y_dfl[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        # y_minus_mean_dfl =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_dfl_total[i_dataset,:]         += y_error_dfl**2
+                        # sum_normalization_dfl_total[i_dataset,:] += y_minus_mean_dfl**2
+
+        n_total = N_tests*N_train*N_samples
+
+        fig, axs = plt.subplots(3,2, figsize=(8,10))
+        axs[0,0].plot(N_data_array ,  sum_error_dfl_total[:,0]/n_total,'k',marker=".")
+        axs[0,0].grid(True)
+        axs[0,0].set_ylabel(r'$\mathit{MSE_x}$   $(m^2)$')
+        axs[0,0].set_yscale('log')
+        axs[0,0].set_xlabel('Training Dataset Size')    
+
+        axs[1,0].plot(N_data_array ,  sum_error_dfl_total[:,1]/n_total,'k',marker=".")
+        axs[1,0].grid(True)
+        axs[1,0].set_ylabel(r'$\mathit{MSE_y}$   $(m^2)$')
+        axs[1,0].set_yscale('log')
+        axs[1,0].set_xlabel('Training Dataset Size')    
+
+        axs[2,0].plot(N_data_array ,  sum_error_dfl_total[:,2]/n_total,'k',marker=".")
+        axs[2,0].grid(True)
+        axs[2,0].set_ylabel(r'$\mathit{MSE_\phi}$   $(rad^2)$')
+        axs[2,0].set_yscale('log')
+        axs[2,0].set_xlabel('Training Dataset Size')    
+        
+        pickle.dump(fig, open('FigureDataset.fig.pickle', 'wb')) 
+        plt.show()
+
+        return y_error_dfl
+    ###########################################################
+    
+    def evaluate_error_modified(t_train, x_train, u_train, s_train, e_train ):
+        
+        k_horizon_array = np.array([1,2,5,10,15,20,30,40,50])
+
+        sum_error_koop_1_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_1_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_2_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_2_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_3_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_3_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_4_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_4_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_5_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_5_total  = np.zeros((len(k_horizon_array), 6))
+
+
+        N_train = 10
+        N_tests = 10
+        N_samples = 300
+
+
+        for i_training in range(N_train):
+            print("Train Number: ", i_training)
+            train_indices = np.random.choice(range(100), size = 10, replace = False)
+
+            # t_train, x_train, u_train, s_train, e_train = agx_sim.collectData(T = 8.0,
+            #                                                                   N_traj = 8)
+
+
+            # plotData2(t_train, x_train, u_train, s_train, e_train)
+
+            # mean_train = np.concatenate((np.mean(np.mean(x_train[:,:,:3], axis = 1), axis = 0),np.mean(np.mean(e_train[:,:,:3], axis = 1), axis = 0)))
+            mean_train = np.mean(np.mean(x_train[:,:,:6], axis = 1), axis = 0)
+
+            # perform testing
+            for i_tests in range(N_tests):
+
+                print("Test Number: ", i_tests)
+
+                t_test, x_test, u_test, s_test, e_test = agx_sim.collectData(T = 7.5, N_traj = 1)
+                
+                # if i_tests == 0:
+                   
+                    # # DFL plotting to evaluate model            
+                    # y_dfl = np.zeros((x_test.shape[1],plant.n))
+                    # y_dfl[0,:] = np.concatenate((x_test[-1,0,:],e_test[-1,0,:]))
+                    # for i in range(x_test.shape[1] - 1):
+                    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_test[-1,i,:])
+
+                    # plotData2(t_test, x_test, u_test, s_test, e_test,
+                    #  t_test, y_dfl[:,: plant.n_x], u_test[-1,:,:], s_test, y_dfl[:,plant.n_x :], comparison = True)
+
+                # # DFL plotting to evaluate model   
+                # dfl.koop_poly_order = 1
+                # setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_2)
+                # n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                
+                # agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                # y_koop      = np.zeros((x_test.shape[1],n_koop))
+                # y_koop[0,:] = agx_sim.dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:])
+                
+                # for i in range(x_test.shape[1] - 1):
+                #     y_koop[i+1,:] = agx_sim.dfl.f_disc_koop(0.0, y_koop[i,:], u_test[-1,i,:])
+
+                # plotData3(t_test, x_test, u_test, s_test, e_test,
+                #  t_test, y_koop[:,: plant.n_x], u_test[-1,:,:], s_test, y_koop[:,plant.n_x :], comparison = True)
+
+
+                for i_horizon in range(len(k_horizon_array)):
+                    k_horizon = k_horizon_array[i_horizon]
+                    k_0_array = np.random.randint(low = 0, high = x_test.shape[1]-k_horizon , size = N_samples)
+
+
+                    ################################################################################################
+                    dfl.koop_poly_order = 1
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_2)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_1 = np.zeros((k_horizon + 1,n_koop ))
+                        y_koop_1[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_1[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_1[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_1      =  y_koop_1[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_1 =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_1_total[i_horizon,:]         += y_error_koop_1**2
+                        sum_normalization_koop_1_total[i_horizon,:] += y_minus_mean_koop_1**2
+                    
+                    #################################################################################################
+
+                    
+                    dfl.koop_poly_order = 2
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x)
+                    n_koop = dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                    # simulate koopman 1
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_2 = np.zeros((k_horizon+1,n_koop ))
+                        y_koop_2[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_2[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_2[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_2      = y_koop_2[-1,:6]  - x_test[-1, k_0 + k_horizon,:6]#np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_2 =  mean_train - x_test[-1, k_0 + k_horizon,:6] #np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_2_total[i_horizon,:]         += y_error_koop_2**2
+                        sum_normalization_koop_2_total[i_horizon,:] += y_minus_mean_koop_2**2
+
+                    #################################################################################################
+                    dfl.koop_poly_order = 2
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_2)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_3 = np.zeros((k_horizon + 1,n_koop ))
+                        y_koop_3[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_3[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_3[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_3      =  y_koop_3[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_3 =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_3_total[i_horizon,:]         += y_error_koop_3**2
+                        sum_normalization_koop_3_total[i_horizon,:] += y_minus_mean_koop_3**2
+                    
+                    #################################################################################################
+
+                    
+                    dfl.koop_poly_order = 1
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_3)
+                    n_koop = dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                    # simulate koopman 1
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_4 = np.zeros((k_horizon+1,n_koop ))
+                        y_koop_4[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_4[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_4[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_4      = y_koop_4[-1,:6]  - x_test[-1, k_0 + k_horizon,:6]#np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_4 =  mean_train - x_test[-1, k_0 + k_horizon,:6] #np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_4_total[i_horizon,:]         += y_error_koop_4**2
+                        sum_normalization_koop_4_total[i_horizon,:] += y_minus_mean_koop_4**2
+
+                    #################################################################################################
+                    dfl.koop_poly_order = 2
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta_3)
+                    n_koop = dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                    # simulate koopman 1
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_5 = np.zeros((k_horizon+1,n_koop ))
+                        y_koop_5[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_5[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_5[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_5      = y_koop_5[-1,:6]  - x_test[-1, k_0 + k_horizon,:6]#np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_5 =  mean_train - x_test[-1, k_0 + k_horizon,:6] #np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_5_total[i_horizon,:]         += y_error_koop_5**2
+                        sum_normalization_koop_5_total[i_horizon,:] += y_minus_mean_koop_5**2
+
+                    #################################################################################################
+                   
+
+        y_koop_1_nmse = np.divide( sum_error_koop_1_total, sum_normalization_koop_1_total )
+        y_koop_2_nmse = np.divide( sum_error_koop_2_total, sum_normalization_koop_2_total )
+
+        n_total = N_train*N_tests*N_samples
+
+        if True:
+            # dfl, x only + poly2, dfl + poly2, dfl naive, dfl naive poly2
+            fig, axs = plt.subplots(3,2, figsize=(8,10))
+            axs[0,0].plot( k_horizon_array,  sum_error_koop_1_total[:,0]/n_total,color = 'black', marker=".")
+            axs[0,0].plot( k_horizon_array,  sum_error_koop_2_total[:,0]/n_total,color = 'tab:blue', marker=".")
+            axs[0,0].plot( k_horizon_array,  sum_error_koop_3_total[:,0]/n_total,color = 'tab:orange', marker=".")
+            axs[0,0].plot( k_horizon_array,  sum_error_koop_4_total[:,0]/n_total,color = 'tab:green', marker=".")      
+            axs[0,0].plot( k_horizon_array,  sum_error_koop_5_total[:,0]/n_total,color = 'tab:purple', marker=".")
+            axs[0,0].grid(True)
+            axs[0,0].set_ylabel(r'$\mathit{MSE_x}$   $(m^2)$')
+            axs[0,0].set_yscale('log')
+
+            axs[1,0].plot( k_horizon_array,  sum_error_koop_1_total[:,1]/n_total,color = 'black', marker=".")
+            axs[1,0].plot( k_horizon_array,  sum_error_koop_2_total[:,1]/n_total,color = 'tab:blue', marker=".")
+            axs[1,0].plot( k_horizon_array,  sum_error_koop_3_total[:,1]/n_total,color = 'tab:orange', marker=".")
+            axs[1,0].plot( k_horizon_array,  sum_error_koop_4_total[:,1]/n_total,color = 'tab:green', marker=".")
+            axs[1,0].plot( k_horizon_array,  sum_error_koop_5_total[:,1]/n_total,color = 'tab:purple', marker=".")
+            axs[1,0].grid(True)
+            axs[1,0].set_ylabel(r'$\mathit{MSE_y} $   $(m^2)$')
+            axs[1,0].set_yscale('log')
+
+            axs[2,0].plot( k_horizon_array,  sum_error_koop_1_total[:,2]/n_total,color = 'black', marker=".")
+            axs[2,0].plot( k_horizon_array,  sum_error_koop_2_total[:,2]/n_total,color = 'tab:blue', marker=".")
+            axs[2,0].plot( k_horizon_array,  sum_error_koop_3_total[:,2]/n_total,color = 'tab:orange', marker=".")
+            axs[2,0].plot( k_horizon_array,  sum_error_koop_4_total[:,2]/n_total,color = 'tab:green', marker=".")
+            axs[2,0].plot( k_horizon_array,  sum_error_koop_5_total[:,2]/n_total,color = 'tab:purple', marker=".")
+            axs[2,0].grid(True)
+            axs[2,0].set_ylabel(r'$\mathit{MSE_\phi}$   $(rad^2)$')
+            axs[2,0].set_xlabel('Time horizon, (steps)')
+            axs[2,0].set_yscale('log')
+
+            axs[0,1].plot( k_horizon_array,  sum_error_koop_1_total[:,3]/n_total,color = 'black', marker=".")
+            axs[0,1].plot( k_horizon_array,  sum_error_koop_2_total[:,3]/n_total,color = 'tab:blue', marker=".")
+            axs[0,1].plot( k_horizon_array,  sum_error_koop_3_total[:,3]/n_total,color = 'tab:orange', marker=".")
+            axs[0,1].plot( k_horizon_array,  sum_error_koop_4_total[:,3]/n_total,color = 'tab:green', marker=".")
+            axs[0,1].plot( k_horizon_array,  sum_error_koop_5_total[:,3]/n_total,color = 'tab:purple', marker=".")
+            axs[0,1].grid(True)
+            axs[0,1].set_ylabel(r'$\mathit{MSE_{v_x}} $   $(m^2 s^{-2})$')
+            axs[0,1].set_yscale('log')
+
+            axs[1,1].plot( k_horizon_array,  sum_error_koop_1_total[:,4]/n_total,color = 'black', marker=".")
+            axs[1,1].plot( k_horizon_array,  sum_error_koop_2_total[:,4]/n_total,color = 'tab:blue', marker=".")
+            axs[1,1].plot( k_horizon_array,  sum_error_koop_3_total[:,4]/n_total,color = 'tab:orange', marker=".")
+            axs[1,1].plot( k_horizon_array,  sum_error_koop_4_total[:,4]/n_total,color = 'tab:green', marker=".")
+            axs[1,1].plot( k_horizon_array,  sum_error_koop_5_total[:,4]/n_total,color = 'tab:purple', marker=".")
+            axs[1,1].grid(True)
+            axs[1,1].set_ylabel(r'$\mathit{MSE_{v_y}} $   $(m^2 s^{-2})$')
+            axs[1,1].set_yscale('log')
+
+            axs[2,1].plot( k_horizon_array,  sum_error_koop_1_total[:,5]/n_total,color = 'black', marker=".")
+            axs[2,1].plot( k_horizon_array,  sum_error_koop_2_total[:,5]/n_total,color = 'tab:blue', marker=".")
+            axs[2,1].plot( k_horizon_array,  sum_error_koop_3_total[:,5]/n_total,color = 'tab:orange', marker=".")
+            axs[2,1].plot( k_horizon_array,  sum_error_koop_4_total[:,5]/n_total,color = 'tab:green', marker=".")
+            axs[2,1].plot( k_horizon_array,  sum_error_koop_5_total[:,5]/n_total,color = 'tab:purple', marker=".")
+            axs[2,1].grid(True)
+            axs[2,1].set_ylabel(r'$\mathit{MSE_\omega} $   $(rad^2 s^{-2})$')
+            axs[2,1].set_xlabel('Time horizon, (steps)')
+            axs[2,1].set_yscale('log')
+
+            pickle.dump(fig, open('Figure_error_MSE.fig.pickle', 'wb')) 
+            plt.show()
+
+
+            plt.show()
+
+        return y_error_dfl
+
+    ####################### evaluation ########################
+    def evaluate_error(t_train, x_train, u_train, s_train, e_train ):
+        
+        k_horizon_array = np.array([1,2,5,10,15,20,30,40,50])
+
+        sum_error_dfl_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_dfl_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_1_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_1_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_2_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_2_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_3_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_3_total  = np.zeros((len(k_horizon_array), 6))
+
+        sum_error_koop_4_total  = np.zeros((len(k_horizon_array), 6))
+        sum_normalization_koop_4_total  = np.zeros((len(k_horizon_array), 6))
+
+        N_train = 10
+        N_tests = 10
+        N_samples = 300
+
+
+        for i_training in range(N_train):
+            print("Train Number: ", i_training)
+            train_indices = np.random.choice(range(100),size = 10, replace = False)
+
+            # t_train, x_train, u_train, s_train, e_train = agx_sim.collectData(T = 8.0,
+            #                                                                   N_traj = 8)
+
+
+            # plotData2(t_train, x_train, u_train, s_train, e_train)
+
+            # mean_train = np.concatenate((np.mean(np.mean(x_train[:,:,:3], axis = 1), axis = 0),np.mean(np.mean(e_train[:,:,:3], axis = 1), axis = 0)))
+            mean_train = np.mean(np.mean(x_train[:,:,:6], axis = 1), axis = 0)
+
+
+            # agx_sim.dfl.regress_model_custom(x_train, e_train, u_train, s_train)    
+
+            # # # DFL plotting to evaluate model            
+            # y_dfl = np.zeros((x_train.shape[1],plant.n))
+            # y_dfl[0,:] = np.concatenate((x_train[-1,0,:],e_train[-1,0,:]))
+            # for i in range(x_train.shape[1] - 1):
+            #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_train[-1,i,:])
+           
+            # plotData(t_train, x_train, u_train, s_train, e_train,
+            #  t_train, y_dfl[:,: plant.n_x], u_train[-1,:,:], s_train, y_dfl[:,plant.n_x :], comparison = True)
+            
+            # perform testing
+            for i_tests in range(N_tests):
+
+                print("Test Number: ", i_tests)
+
+                t_test, x_test, u_test, s_test, e_test = agx_sim.collectData(T = 7.5, N_traj = 1)
+                
+                # if i_tests == 0:
+                   
+                #     # # DFL plotting to evaluate model            
+                #     # y_dfl = np.zeros((x_test.shape[1],plant.n))
+                #     # y_dfl[0,:] = np.concatenate((x_test[-1,0,:],e_test[-1,0,:]))
+                #     # for i in range(x_test.shape[1] - 1):
+                #     #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_test[-1,i,:])
+
+                #     # plotData2(t_test, x_test, u_test, s_test, e_test,
+                #     #  t_test, y_dfl[:,: plant.n_x], u_test[-1,:,:], s_test, y_dfl[:,plant.n_x :], comparison = True)
+
+                #     # DFL plotting to evaluate model   
+                #     dfl.koop_poly_order = 1
+                #     setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+                #     n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    
+                #     agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                #     y_koop      = np.zeros((x_test.shape[1],n_koop))
+                #     y_koop[0,:] = agx_sim.dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:])
+                    
+                #     for i in range(x_test.shape[1] - 1):
+                #         y_koop[i+1,:] = agx_sim.dfl.f_disc_koop(0.0, y_koop[i,:], u_test[-1,i,:])
+
+                #     plotData2(t_test, x_test, u_test, s_test, e_test,
+                #      t_test, y_koop[:,: plant.n_x], u_test[-1,:,:], s_test, y_koop[:,plant.n_x :], comparison = True)
+
+
+                for i_horizon in range(len(k_horizon_array)):
+                    k_horizon = k_horizon_array[i_horizon]
+                    k_0_array = np.random.randint(low = 0, high = x_test.shape[1]-k_horizon , size = N_samples)
+
+                    # # simulate DFL
+                    # for i_sample in range(N_samples):
+                        
+                    #     k_0 = k_0_array[i_sample]
+                    #     y_dfl = np.zeros((k_horizon+1,plant.n))
+                    #     y_dfl[0,:] = np.concatenate((x_test[0,k_0,:], e_test[0,k_0,:]))
+
+                    #     for j in range(k_horizon):
+                    #         y_dfl[j+1,:]  = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[j,:], u_test[0,k_0 + j,:])
+
+                    #     # plt.plot(y_dfl[:,1])
+                    #     # plt.plot(x_test[-1,k_0:k_0+k_horizon+1,1])
+                    #     # print(x_test[-1, k_0+k_horizon,3])
+                    #     # plt.show()
+
+                    #     y_error_dfl  = y_dfl[-1,:6] - x_test[-1, k_0 + k_horizon,:6]# - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                    #     y_minus_mean_dfl =  mean_train - x_test[-1, k_0 + k_horizon,:6]# - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                    #     sum_error_dfl_total[i_horizon,:]         += y_error_dfl**2
+                    #     sum_normalization_dfl_total[i_horizon,:] += y_minus_mean_dfl**2
+                    dfl.koop_poly_order = 1
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_dfl = np.zeros((k_horizon + 1,n_koop ))
+                        y_dfl[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_dfl[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_dfl[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_dfl      =  y_dfl[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_dfl =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_dfl_total[i_horizon,:]         += y_error_dfl**2
+                        sum_normalization_dfl_total[i_horizon,:] += y_minus_mean_dfl**2
+                    
+                    #################################################################################################
+
+                    
+                    dfl.koop_poly_order = 3
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x)
+                    n_koop = dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+                    # simulate koopman 1
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_1 = np.zeros((k_horizon+1,n_koop ))
+                        y_koop_1[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_1[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_1[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_1      = y_koop_1[-1,:6]  - x_test[-1, k_0 + k_horizon,:6]#np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_1 =  mean_train - x_test[-1, k_0 + k_horizon,:6] #np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_1_total[i_horizon,:]         += y_error_koop_1**2
+                        sum_normalization_koop_1_total[i_horizon,:] += y_minus_mean_koop_1**2
+
+                    #################################################################################################
+
+                    dfl.koop_poly_order = 4
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x)
+                    n_koop = dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_2 = np.zeros((k_horizon + 1,n_koop ))
+                        y_koop_2[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_2[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_2[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_2      =  y_koop_2[-1,:6] - x_test[-1, k_0 + k_horizon,:6]#-np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_2 =  mean_train - x_test[-1, k_0 + k_horizon,:6]     #-  np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_2_total[i_horizon,:]         += y_error_koop_2**2
+                        sum_normalization_koop_2_total[i_horizon,:] += y_minus_mean_koop_2**2
+
+                    ##################################################################################################
+                    dfl.koop_poly_order = 2
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_3 = np.zeros((k_horizon + 1,n_koop ))
+                        y_koop_3[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_3[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_3[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_3      =  y_koop_3[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_3 =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_3_total[i_horizon,:]         += y_error_koop_3**2
+                        sum_normalization_koop_3_total[i_horizon,:] += y_minus_mean_koop_3**2
+                    
+                    ##################################################################################################
+
+                    dfl.koop_poly_order = 3 
+                    setattr(dfl, "g_Koop", dfl.g_Koop_x_eta)
+                    n_koop = dfl.g_Koop(x_test[0,0,:], e_test[0,0,:], s_test[0,0,:]).shape[0]
+                    agx_sim.dfl.regress_model_Koop_with_surf(x_train[ train_indices,:,:], e_train[ train_indices,:,:], u_train[ train_indices,:,:], s_train[ train_indices,:,:])
+
+                    for i_sample in range(N_samples):
+                        
+                        k_0 = k_0_array[i_sample]
+                        y_koop_4 = np.zeros((k_horizon + 1,n_koop ))
+                        y_koop_4[0,:] = agx_sim.dfl.g_Koop(x_test[0,k_0,:], e_test[0,k_0,:], s_test[0,k_0,:])
+
+                        for j in range(k_horizon ):
+                            y_koop_4[j+1,:]  = agx_sim.dfl.f_disc_koop(0.0, y_koop_4[j,:], u_test[0,k_0 + j,:])
+                        
+                        y_error_koop_4      =  y_koop_4[-1,:6] - x_test[-1, k_0 + k_horizon,:6] # - np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        y_minus_mean_koop_4 =  mean_train      - x_test[-1, k_0 + k_horizon,:6] #- np.concatenate((x_test[-1, k_0 + k_horizon,:3],e_test[-1, k_0 + k_horizon,:3]))
+                        sum_error_koop_4_total[i_horizon,:]         += y_error_koop_4**2
+                        sum_normalization_koop_4_total[i_horizon,:] += y_minus_mean_koop_4**2
+
+        y_dfl_nmse    = np.divide( sum_error_dfl_total, sum_normalization_dfl_total )
+        y_koop_1_nmse = np.divide( sum_error_koop_1_total, sum_normalization_koop_1_total )
+        y_koop_2_nmse = np.divide( sum_error_koop_2_total, sum_normalization_koop_2_total )
+        y_koop_3_nmse = np.divide( sum_error_koop_3_total, sum_normalization_koop_3_total )
+        y_koop_4_nmse = np.divide( sum_error_koop_4_total, sum_normalization_koop_4_total )
+
+        n_total = N_tests*N_samples*len(k_horizon_array)
+        print(n_total)
+
+        fig, axs = plt.subplots(3,2, figsize=(8,10))
+        axs[0,0].plot( k_horizon_array,  sum_error_dfl_total[:,0]/n_total,'k',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_1_total[:,0]/n_total,'r',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_2_total[:,0]/n_total,'g',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_3_total[:,0]/n_total,'b',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_4_total[:,0]/n_total,'m',marker=".")
+        axs[0,0].grid(True)
+        axs[0,0].set_ylabel(r'$\mathit{MSE_x}$   $(m^2)$')
+
+        axs[1,0].plot( k_horizon_array,  sum_error_dfl_total[:,1]/n_total,'k',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_1_total[:,1]/n_total,'r',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_2_total[:,1]/n_total,'g',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_3_total[:,1]/n_total,'b',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_4_total[:,1]/n_total,'m',marker=".")
+        axs[1,0].grid(True)
+        axs[1,0].set_ylabel(r'$\mathit{MSE_y} $   $(m^2)$')
+
+        axs[2,0].plot( k_horizon_array,  sum_error_dfl_total[:,2]/n_total,'k',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_1_total[:,2]/n_total,'r',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_2_total[:,2]/n_total,'g',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_3_total[:,2]/n_total,'b',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_4_total[:,2]/n_total,'m',marker=".")
+        axs[2,0].grid(True)
+        axs[2,0].set_ylabel(r'$\mathit{MSE_\phi}$   $(rad^2)$')
+        axs[2,0].set_xlabel('Time horizon, (steps)')
+
+        axs[0,1].plot( k_horizon_array,  sum_error_dfl_total[:,3]/n_total,'k',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_1_total[:,3]/n_total,'r',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_2_total[:,3]/n_total,'g',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_3_total[:,3]/n_total,'b',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_4_total[:,3]/n_total,'m',marker=".")
+        axs[0,1].grid(True)
+        axs[0,1].set_ylabel(r'$\mathit{MSE_{v_x}} $   $(m^2 s^{-2})$')
+
+        axs[1,1].plot( k_horizon_array,  sum_error_dfl_total[:,4]/n_total,'k',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_1_total[:,4]/n_total,'r',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_2_total[:,4]/n_total,'g',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_3_total[:,4]/n_total,'b',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_4_total[:,4]/n_total,'m',marker=".")
+        axs[1,1].grid(True)
+        axs[1,1].set_ylabel(r'$\mathit{MSE_{v_y}} $   $(m^2 s^{-2})$')
+
+        axs[2,1].plot( k_horizon_array, sum_error_dfl_total[:,5]/n_total,'k',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_1_total[:,5]/n_total,'r',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_2_total[:,5]/n_total,'g',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_3_total[:,5]/n_total,'b',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_4_total[:,5]/n_total,'m',marker=".")
+        axs[2,1].grid(True)
+        axs[2,1].set_ylabel(r'$\mathit{MSE_\omega} $   $(rad^2 s^{-2})$')
+        axs[2,1].set_xlabel('Time horizon, (steps)')    
+        pickle.dump(fig, open('Figure1.fig.pickle', 'wb')) 
+        plt.show()
+
+
+
+        fig, axs = plt.subplots(3,2, figsize=(8,10))
+    
+        axs[0,0].plot( k_horizon_array,  sum_error_dfl_total[:,0]/n_total,'k',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_1_total[:,0]/n_total,'r',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_2_total[:,0]/n_total,'g',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_3_total[:,0]/n_total,'b',marker=".")
+        axs[0,0].plot( k_horizon_array,  sum_error_koop_4_total[:,0]/n_total,'m',marker=".")
+        axs[0,0].grid(True)
+        axs[0,0].set_ylabel(r'$\mathit{MSE_x} $   $(m^2)$')
+        axs[0,0].set_yscale('log')
+
+        axs[1,0].plot( k_horizon_array,  sum_error_dfl_total[:,1]/n_total,'k',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_1_total[:,1]/n_total,'r',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_2_total[:,1]/n_total,'g',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_3_total[:,1]/n_total,'b',marker=".")
+        axs[1,0].plot( k_horizon_array,  sum_error_koop_4_total[:,1]/n_total,'m',marker=".")
+        axs[1,0].grid(True)
+        axs[1,0].set_ylabel(r'$\mathit{MSE_y}$   $(m^2)$')
+        axs[1,0].set_yscale('log')
+
+        axs[2,0].plot( k_horizon_array,  sum_error_dfl_total[:,2]/n_total,'k',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_1_total[:,2]/n_total,'r',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_2_total[:,2]/n_total,'g',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_3_total[:,2]/n_total,'b',marker=".")
+        axs[2,0].plot( k_horizon_array,  sum_error_koop_4_total[:,2]/n_total,'m',marker=".")
+        axs[2,0].grid(True)
+        axs[2,0].set_ylabel(r'$\mathit{MSE_\phi}$   $(rad^2)$')
+        axs[2,0].set_xlabel('Time horizon, (steps)')
+        axs[2,0].set_yscale('log')
+
+        axs[0,1].plot( k_horizon_array,  sum_error_dfl_total[:,3]/n_total,'k',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_1_total[:,3]/n_total,'r',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_2_total[:,3]/n_total,'g',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_3_total[:,3]/n_total,'b',marker=".")
+        axs[0,1].plot( k_horizon_array,  sum_error_koop_4_total[:,3]/n_total,'m',marker=".")
+        axs[0,1].grid(True)
+        axs[0,1].set_ylabel(r'$\mathit{MSE_{v_x}}$   $(m^2 s^{-2})$')
+        axs[0,1].set_yscale('log')
+
+        axs[1,1].plot( k_horizon_array,  sum_error_dfl_total[:,4]/n_total,'k',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_1_total[:,4]/n_total,'r',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_2_total[:,4]/n_total,'g',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_3_total[:,4]/n_total,'b',marker=".")
+        axs[1,1].plot( k_horizon_array,  sum_error_koop_4_total[:,4]/n_total,'m',marker=".")
+        axs[1,1].grid(True)
+        axs[1,1].set_ylabel(r'$\mathit{MSE_{v_y}} $   $(m^2 s^{-2})$')
+        axs[1,1].set_yscale('log')
+
+        axs[2,1].plot( k_horizon_array, sum_error_dfl_total[:,5]/n_total,'k',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_1_total[:,5]/n_total,'r',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_2_total[:,5]/n_total,'g',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_3_total[:,5]/n_total,'b',marker=".")
+        axs[2,1].plot( k_horizon_array, sum_error_koop_4_total[:,5]/n_total,'m',marker=".")
+        axs[2,1].grid(True)
+        axs[2,1].set_ylabel(r'$\mathit{MSE_\omega} $   $(rad^2 s^{-2})$')
+        axs[2,1].set_yscale('log')
+        axs[2,1].set_xlabel('Time horizon, (steps)')
+        pickle.dump(fig, open('Figure2.fig.pickle', 'wb')) 
+        plt.show()
+
+        fig, axs = plt.subplots(3,2, figsize=(8,10))
+    
+        axs[0,0].plot( k_horizon_array,  y_dfl_nmse[:,0],'k',marker=".")
+        axs[0,0].plot( k_horizon_array,  y_koop_1_nmse[:,0],'r',marker=".")
+        axs[0,0].plot( k_horizon_array,  y_koop_2_nmse[:,0],'g',marker=".")
+        axs[0,0].plot( k_horizon_array,  y_koop_3_nmse[:,0],'b',marker=".")
+        axs[0,0].plot( k_horizon_array,  y_koop_4_nmse[:,0],'m',marker=".")
+        axs[0,0].set_title("x")
+
+        axs[1,0].plot( k_horizon_array,  y_dfl_nmse[:,1],'k',marker=".")
+        axs[1,0].plot( k_horizon_array,  y_koop_1_nmse[:,1],'r',marker=".")
+        axs[1,0].plot( k_horizon_array,  y_koop_2_nmse[:,1],'g',marker=".")
+        axs[1,0].plot( k_horizon_array,  y_koop_3_nmse[:,1],'b',marker=".")
+        axs[1,0].plot( k_horizon_array,  y_koop_4_nmse[:,1],'m',marker=".")
+        axs[1,0].set_title("y")
+
+        axs[2,0].plot( k_horizon_array,  y_dfl_nmse[:,2],'k',marker=".")
+        axs[2,0].plot( k_horizon_array,  y_koop_1_nmse[:,2],'r',marker=".")
+        axs[2,0].plot( k_horizon_array,  y_koop_2_nmse[:,2],'g',marker=".")
+        axs[2,0].plot( k_horizon_array,  y_koop_3_nmse[:,2],'b',marker=".")
+        axs[2,0].plot( k_horizon_array,  y_koop_4_nmse[:,2],'m',marker=".")
+        axs[2,0].set_title("theta")
+
+        axs[0,1].plot( k_horizon_array,  y_dfl_nmse[:,3],'k',marker=".")
+        axs[0,1].plot( k_horizon_array,  y_koop_1_nmse[:,3],'r',marker=".")
+        axs[0,1].plot( k_horizon_array,  y_koop_2_nmse[:,3],'g',marker=".")
+        axs[0,1].plot( k_horizon_array,  y_koop_3_nmse[:,3],'b',marker=".")
+        axs[0,1].plot( k_horizon_array,  y_koop_4_nmse[:,3],'m',marker=".")
+        axs[0,1].set_title("v_x")
+
+        axs[1,1].plot( k_horizon_array,  y_dfl_nmse[:,4],'k',marker=".")
+        axs[1,1].plot( k_horizon_array,  y_koop_1_nmse[:,4],'r',marker=".")
+        axs[1,1].plot( k_horizon_array,  y_koop_2_nmse[:,4],'g',marker=".")
+        axs[1,1].plot( k_horizon_array,  y_koop_3_nmse[:,4],'b',marker=".")
+        axs[1,1].plot( k_horizon_array,  y_koop_4_nmse[:,4],'m',marker=".")
+        axs[1,1].set_title("v_y")
+        
+        axs[2,1].plot( k_horizon_array,  y_dfl_nmse[:,5],'k',marker=".")
+        axs[2,1].plot( k_horizon_array,  y_koop_1_nmse[:,5],'r',marker=".")
+        axs[2,1].plot( k_horizon_array,  y_koop_2_nmse[:,5],'g',marker=".")
+        axs[2,1].plot( k_horizon_array,  y_koop_3_nmse[:,5],'b',marker=".")
+        axs[2,1].plot( k_horizon_array,  y_koop_4_nmse[:,5],'m',marker=".")
+        axs[2,1].set_title("omega")
+
+        plt.show()
+
+        return y_error_dfl
+    ###########################################################
+    
+    # y_error_dfl = evaluate_error_dataset_size(t, x, u, s, e)
+    # y_error_dfl = evaluate_error_modified(t, x, u, s, e)
+
+    # exit()
+
     # A,B,K = dfl.linearize_soil_dynamics(np.concatenate((x[0,0,:],e[0,0,:])))
     
     # print(A)
@@ -1445,25 +2650,49 @@ def main(args):
     # print(B)
     
     # exit()
+    # t_valid, x_valid, u_valid, s_valid, e_valid = agx_sim.collectData(T = 12, N_traj = 1)
 
-    # y_dfl = np.zeros((x.shape[1],plant.n))
-    # y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
+    # y_dfl = np.zeros((x_valid.shape[1],plant.n))
+    # y_dfl[0,:] = np.concatenate((x_valid[-1,0,:],e_valid[-1,0,:]))
         
-    # for i in range(x.shape[1] - 1):
-    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
+    # for i in range(x_valid.shape[1] - 1):
+    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u_valid[-1,i,:])
     
-    # plotData2(t, x, u, s, e,
-    #      t, y_dfl[:,:plant.n_x ], u[-1,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
+    # plotData2(t_valid, x_valid, u_valid, s_valid, e_valid,
+    #      t_valid, y_dfl[:,:plant.n_x ], u_valid[-1,:,:], s_valid, y_dfl[:,plant.n_x:], comparison = True)
     
     # exit()
 
+    # agx_sim.control_mode = "trajectory_control"
+
+    # # re-run with
+    # t_gt_pid, x_gt_pid, u_gt_pid, s_gt_pid, e_gt_pid = agx_sim.collectData(T = 5.0, N_traj =  N_traj_test)
+    
     agx_sim.control_mode = "mpcc"
 
     # re-run with
-    t_gt, x_gt, u_gt, s_gt, e_gt = agx_sim.collectData(T = T_traj_test, N_traj =  N_traj_test)
+    agx_sim.q_theta_mpcc = 5.
+    t_gt_mpc_1, x_gt_mpc_1, u_gt_mpc_1, s_gt_mpc_1, e_gt_mpc_1 = agx_sim.collectData(T = 7.5, N_traj =  N_traj_test)
     
-    y_dfl = np.zeros((x_gt.shape[1],plant.n))
-    y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
+    agx_sim.q_theta_mpcc = 5. # 8 
+    agx_sim.set_height_from_previous = True
+    t_gt_mpc_2, x_gt_mpc_2, u_gt_mpc_2, s_gt_mpc_2, e_gt_mpc_2 = agx_sim.collectData(T = 7.5 , N_traj =  N_traj_test)
+
+    agx_sim.q_theta_mpcc = 5. # 8 
+    agx_sim.set_height_from_previous = True
+    t_gt_mpc_3, x_gt_mpc_3, u_gt_mpc_3, s_gt_mpc_3, e_gt_mpc_3 = agx_sim.collectData(T = 7.5 , N_traj =  N_traj_test)
+
+    agx_sim.q_theta_mpcc = 5. # 8 
+    agx_sim.set_height_from_previous = True
+    t_gt_mpc_4, x_gt_mpc_4, u_gt_mpc_4, s_gt_mpc_4, e_gt_mpc_4 = agx_sim.collectData(T = 7.5 , N_traj =  N_traj_test)
+
+    _, _, _, _, _ = agx_sim.collectData(T = 0.1 , N_traj =  N_traj_test)
+
+    # print(t_gt_mpc_1[0, -1])
+    # print(t_gt_mpc_2[0, -1])
+
+    # y_dfl = np.zeros((x_gt.shape[1],plant.n))
+    # y_dfl[0,:] = np.concatenate((x_gt[0,0,:], e_gt[0,0,:]))
     # y_dfl[0,:] =  dfl.g_Koop(x_gt[0,0,:],e_gt[0,0,:])
 
 
@@ -1472,15 +2701,43 @@ def main(args):
 
     # plotData(t_gt, x_gt, u_gt, s_gt, e_gt,
     #          t_gt, y_dfl[:,: plant.n_x], u_gt[0,:,:], s_gt, y_dfl[:,plant.n_x :], comparison = True)
-    plotData2(t_gt, x_gt, u_gt, s_gt, e_gt)
+    plotData3(t_gt_mpc_1, x_gt_mpc_1, u_gt_mpc_1, s_gt_mpc_1, e_gt_mpc_1, dfl)
    
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(x_gt[0,:,0], x_gt[0,:,1],'.', color = 'tab:blue')
-    ax = agx_sim.mpcc.draw_path(ax, -10, -5)
+    
+    # ax.quiver(x_gt_mpc[0, ::10, 0],
+    #           x_gt_mpc[0, ::10, 1],
+    #           -0.5*np.cos(x_gt_mpc[0, ::10, 2]),
+    #            0.5*np.sin(x_gt_mpc[0, ::10, 2]),units = 'xy',headwidth = 0.0,headlength = 0.0, scale = 2.2, width = 0.005,color = 'royalblue')
+
+    # ax.quiver(x_gt_pid[0, ::10, 0],
+    #           x_gt_pid[0, ::10, 1],
+    #           -0.5*np.cos(x_gt_pid[0, ::10, 2]),
+    #            0.5*np.sin(x_gt_pid[0, ::10, 2]),units = 'xy',headwidth = 0.0,headlength = 0.0, scale = 2.2, width = 0.005,color = 'forestgreen')
+    
+    fig = plt.figure(figsize=[6.4, 2.8])
+    ax = fig.add_subplot(1, 1, 1)    
+    
+    ax.plot(np.array([-8,5]),np.array([0,0]), color = 'black')
+
+    ax.plot(x_gt_mpc_1[0, :, 0], x_gt_mpc_1[0, :, 1], color = 'lightsteelblue')
+    ax.plot(x_gt_mpc_2[0, :, 0], x_gt_mpc_2[0, :, 1], color = 'cornflowerblue')
+    ax.plot(x_gt_mpc_3[0, :, 0], x_gt_mpc_3[0, :, 1], color = 'royalblue')
+    ax.plot(x_gt_mpc_4[0, :, 0], x_gt_mpc_4[0, :, 1], color = 'mediumblue')
+
     ax = agx_sim.mpcc.draw_soil(ax,-5, 5)
+    ax = agx_sim.mpcc.draw_path(ax, -10, -5)
+
+    ax.set_ylabel(r'$\mathit{y}$  $(m)$')
+    ax.set_xlabel(r'$\mathit{x}$  $(m)$')
+    # ax.legend(['Bucket tip '])
     ax.axis('equal')
+    plt.tight_layout()
+    ax.set_xlim(-4.5,0.0)  
+    ax.set_ylim(np.amin(x_gt_mpc_1[0, :, 1])-0.5,np.amax(x_gt_mpc_1[0, :, 1]) + 0.5)
+    pickle.dump(fig, open('Figure_mpcc_multi_scoop.fig.pickle', 'wb')) 
+
     plt.show()
+
 
 # Entry point when this script is loaded with python
 if agxPython.getContext() is None:

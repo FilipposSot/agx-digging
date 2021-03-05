@@ -267,7 +267,7 @@ class AgxSimulator():
         y_c =  0.5*n_y*r
 
         surf_heap_i = heap_height*np.exp(-(np.square(X-x_c) + np.square(Y-y_c))/heap_sigma**2)
-        np_HeightField = np_HeightField + -1*surf_heap_i
+        # np_HeightField = np_HeightField + -1*surf_heap_i
 
         # np_HeightField = np_HeightField + np.random.uniform(low = -noise_level, high = noise_level, size = surface.shape)
 
@@ -605,17 +605,22 @@ class AgxSimulator():
             if self.model_has_surface_shape:
                 # define the path to be followed by MPCC
                 x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
-                                                  3.0, 3.5, 4.0, 4.5, 5.0,
-                                                  5.5, 6.0, 6.5, 7.0,7.5])
+                                                  3.0, 3.5, 4.0])
                 y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
-                y_path = y_soil + np.array([0., -0.15, -0.25, -0.25, -0.25,
-                                         -0.25, -0.25, -0.25, -0.25, -0.25,
-                                         -0.25, -0.25, -0.25, -0.25, -0.25])
-
-                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -70000*self.scaling, -10000*self.scaling,    0.])
-                x_max = np.array([ 0.               , np.amax(y_path),   1.5,  1.3,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
+                y_path = y_soil + np.array([0., -0.15, -0.95, -0.95, -0.95,
+                                         -0.95, -0.95, -0.02])
+                # # define the path to be followed by MPCC
+                # x_path = x_initial_tip + np.array([0., 0.5, 1.5, 2.0, 2.5, 
+                #                                   3.0, 3.5, 4.0, 4.5, 5.0,
+                #                                   5.5, 6.0, 6.5, 7.0,7.5])
+                # y_soil,_,_,_ = self.soilShapeEvaluator.soil_surf_eval(x_path)
+                # y_path = y_soil + np.array([0., -0.15, -0.35, -0.35, -0.35,
+                #                          -0.35, -0.35, -0.35, -0.35, -0.35,
+                #                          -0.35, -0.35, -0.35, -0.35, -0.35])
+                x_min = np.array([ x_initial_tip-0.1,  -2.           ,  -0.1, -1.5, -70000*self.scaling, -70000*self.scaling,    0.])
+                x_max = np.array([ 3.               , np.amax(y_path),   1.5,  1.3,  70000*self.scaling,  70000*self.scaling, 3000.*self.scaling])
                 u_min = np.array([ 0., -5000*self.scaling])
-                u_max = np.array([ 10000*self.scaling,  5000*self.scaling])
+                u_max = np.array([ 13000*self.scaling,  10000*self.scaling])
 
             else:
 
@@ -658,9 +663,9 @@ class AgxSimulator():
             self.mpcc = copy.copy(mpcc)
 
             # define the MPCC cost matrices and coef.
-            Q = sparse.diags([200., 10.])
+            Q = 100*sparse.diags([2., 10.])
             R = sparse.diags([1., 1., 1.])
-            q_theta = 1.
+            q_theta = 20.
 
             # TODO Set the MPCC initial state (includes states, aux variables and path variable)
             pos = shovel.getCuttingEdgeWorld().p2
@@ -734,14 +739,18 @@ class AgxSimulator():
             while sim.getTimeStamp() <= T:
 
                 # print("------------- new time step -----------------")
-                t_array.append(sim.getTimeStamp())
                 # Measure all the quantities
                 # TODO: make sure rigid body referenced is explicitly bucket
                 pos    = shov.getCuttingEdgeWorld().p2
                 vel    = sim.getRigidBodies()[0].getVelocity()
                 acl    = sim.getRigidBodies()[0].getAcceleration()
                     
-                ##
+                               
+                if pos[0] > 0.95:
+                    break
+                
+                t_array.append(sim.getTimeStamp())
+
                 # Measure Forces from soil
                 penForce_tot = agx.Vec3()
                 sepForce_tot = agx.Vec3()
@@ -1046,7 +1055,7 @@ class ForceDriverDFL(agxSDK.StepEventListener):
             xi =  np.array([ self.pos[0], self.pos[2], self.vel[0], self.vel[2],  self.scaling*self.soil_force_last[0],  self.scaling*self.soil_force_last[2], self.scaling*self.fill])
             ####################### MPCC CONTROL #########################
 
-            U = self.mpcc.control_function(xi, t)
+            U, x_opt = self.mpcc.control_function(xi, t)
             
             print('---------------------------------------------')
             ####################### MPCC CONTROL #########################
@@ -1207,7 +1216,7 @@ def plotData(t, x, u, s, e, t2=None, x2=None, u2=None, s2=None, e2=None, compari
 
 def saveData(t, x, u, s, e):
 
-    np.savez('data_26_01_21.npz',   t = t,
+    np.savez('data_no_angle.npz',   t = t,
                                     x = x,
                                     e = e,
                                     s = s,
@@ -1230,7 +1239,8 @@ def main(args):
     T_traj_data = 3.0
     N_traj_data = 5
     plot_data = True
-    save_data = False
+    save_data = True
+    use_saved_data = True
 
     T_traj_test = 10.0
     N_traj_test = 1
@@ -1243,7 +1253,12 @@ def main(args):
                          dt_control = dt_control)
     setattr(agx_sim, "dfl", dfl)
    
-    t, x, u, s, e = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
+
+    if use_saved_data:
+        t, x, u, s, e = loadData('data_no_angle.npz')
+    else:
+        t, x, u, s, e = agx_sim.collectData(T = T_traj_data, N_traj = N_traj_data)
+
 
     if plot_data:
         plotData(t, x, u, s, e)
@@ -1257,14 +1272,14 @@ def main(args):
     # print(scipy.linalg.logm(A)/dt_control)
     
 
-    y_dfl = np.zeros((x.shape[1],plant.n))
-    y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
+    # y_dfl = np.zeros((x.shape[1],plant.n))
+    # y_dfl[0,:] = np.concatenate((x[-1,0,:],e[-1,0,:]))
         
-    for i in range(x.shape[1] - 1):
-        y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
+    # for i in range(x.shape[1] - 1):
+    #     y_dfl[i+1,:] = agx_sim.dfl.f_disc_dfl_tv(0.0, y_dfl[i,:], u[-1,i,:])
     
-    plotData(t, x, u, s, e,
-         t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
+    # plotData(t, x, u, s, e,
+    #      t, y_dfl[:,:plant.n_x ], u[0,:,:], s, y_dfl[:,plant.n_x:], comparison = True)
     
     agx_sim.control_mode = "mpcc"
 
