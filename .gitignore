@@ -131,5 +131,5 @@ dmypy.json
 # data files
 *.npz
 *.fig.pickle
-*.tff
+*.ttf
 *.json
