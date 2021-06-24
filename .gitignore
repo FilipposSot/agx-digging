@@ -128,8 +128,10 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# data files
+# data files and folders
 *.npz
 *.fig.pickle
 *.ttf
 *.json
+data/
+captured_images/
